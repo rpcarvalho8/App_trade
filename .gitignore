@@ -11,3 +11,6 @@ trading-os.zip
 
 # Credenciais Git (token)
 .git-credentials.env
+
+# Lockfile do Bun (projeto padronizado em NPM)
+bun.lock
