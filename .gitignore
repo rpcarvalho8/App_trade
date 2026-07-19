@@ -1,1 +1,13 @@
 trading-os.zip
+
+# Bases de dados locais (dados reais / sensíveis)
+*.db
+
+# Arquivos pesados
+*.tar.gz
+
+# Variáveis de ambiente locais (chaves de API)
+.env*.local
+
+# Credenciais Git (token)
+.git-credentials.env

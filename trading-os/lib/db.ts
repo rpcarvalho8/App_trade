@@ -127,6 +127,16 @@ export async function initDB() {
     );
   `);
 
+  // Migrate ai_analyses for weekly reports (safe if columns already exist).
+  const aiCols = await db.execute("PRAGMA table_info(ai_analyses)");
+  const aiColNames = aiCols.rows.map((r: any) => r.name);
+  if (!aiColNames.includes("week_start")) {
+    await db.execute("ALTER TABLE ai_analyses ADD COLUMN week_start TEXT DEFAULT ''");
+  }
+  if (!aiColNames.includes("week_end")) {
+    await db.execute("ALTER TABLE ai_analyses ADD COLUMN week_end TEXT DEFAULT ''");
+  }
+
   // Always ensure main setups exist (upsert)
   await seedSetups();
 
