@@ -1,7 +1,30 @@
 import { createClient } from "@libsql/client";
 import path from "path";
+import fs from "fs";
 
 const DB_PATH = path.join(process.cwd(), "trading.db");
+
+// Guard defensivo: valida se a base de dados existe fisicamente e não está vazia.
+// Evita confusões quando o servidor arranca no diretório errado (process.cwd()
+// diferente de trading-os/), caso em que uma DB nova e vazia seria criada.
+try {
+  const stats = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH) : null;
+  if (!stats) {
+    console.warn(
+      `[Aviso DB] O ficheiro 'trading.db' não foi encontrado em ${DB_PATH}. ` +
+        `Uma nova base de dados vazia poderá ser criada. ` +
+        `Confirma que arrancaste o servidor dentro da pasta 'trading-os/'.`
+    );
+  } else if (stats.size === 0) {
+    console.warn(
+      `[Aviso DB] O ficheiro 'trading.db' em ${DB_PATH} tem 0 bytes (vazio). ` +
+        `Os teus dados podem estar noutro diretório — confirma o local de arranque do servidor.`
+    );
+  }
+} catch (e: any) {
+  console.warn(`[Aviso DB] Falha ao validar '${DB_PATH}':`, e?.message || e);
+}
+
 export const db = createClient({ url: `file:${DB_PATH}` });
 
 export async function initDB() {
