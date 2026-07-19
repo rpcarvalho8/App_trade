@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:backup": "node scripts/db-utils.js --backup",
+    "db:restore": "node scripts/db-utils.js --restore"
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
