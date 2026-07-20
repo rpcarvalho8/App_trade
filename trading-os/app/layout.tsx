@@ -3,9 +3,11 @@ import "./globals.css";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
+import AlertToaster from "./components/AlertToaster";
 
 const navItems = [
   { href:"/", label:"Overview", icon:"◈" },
+  { href:"/morning-brief", label:"Morning Brief", icon:"🌅" },
   { href:"/journal", label:"Journal", icon:"◉" },
   { href:"/weekly-journal", label:"Journal Semanal", icon:"📅" },
   { href:"/performance", label:"Performance", icon:"▲" },
@@ -106,6 +108,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </aside>
           <main style={{ flex:1,overflow:"auto",padding:20 }}>{children}</main>
         </div>
+        {/* Alertas em tempo real (toasts globais via WebSocket) */}
+        <AlertToaster />
       </body>
     </html>
   );
