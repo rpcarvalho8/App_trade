@@ -17,3 +17,6 @@ bun.lock
 
 # Backups locais da base de dados (nunca versionar)
 backups/
+
+# Morning Brief generated reports (dados locais)
+trading-os/reports/morning-brief/

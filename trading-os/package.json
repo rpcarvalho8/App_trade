@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "db:backup": "node scripts/db-utils.js --backup",
-    "db:restore": "node scripts/db-utils.js --restore"
+    "db:restore": "node scripts/db-utils.js --restore",
+    "brief": "node scripts/morning-brief.js",
+    "brief:schedule": "node scripts/morning-brief.js --schedule"
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
