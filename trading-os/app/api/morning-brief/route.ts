@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureTodayBrief, todayISO } from "@/lib/morning-brief";
+import { mdToHtml } from "@/lib/md";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export async function GET() {
     if (!markdown) {
       return NextResponse.json({ ok: false, date, error: "Brief indisponível." }, { status: 503 });
     }
-    return NextResponse.json({ ok: true, date, generated, markdown });
+    return NextResponse.json({ ok: true, date, generated, markdown, html: mdToHtml(markdown) });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, date: todayISO(), error: e?.message || "Falha ao gerar o brief." },

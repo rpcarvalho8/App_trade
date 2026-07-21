@@ -1,8 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { marked } from "marked";
-
-marked.setOptions({ gfm: true, breaks: false });
 
 export default function MorningBriefPage() {
   const [html, setHtml] = useState<string>("");
@@ -20,7 +17,8 @@ export default function MorningBriefPage() {
       if (!j.ok) throw new Error(j.error || "Falha ao carregar o brief.");
       setDate(j.date);
       setGenerated(j.generated);
-      setHtml(await marked.parse(j.markdown));
+      // O HTML é gerado no servidor (conversor nativo em lib/md.ts) — sem dependências no cliente.
+      setHtml(j.html || "");
     } catch (e: any) {
       setError(e?.message || "Erro desconhecido.");
     } finally {
