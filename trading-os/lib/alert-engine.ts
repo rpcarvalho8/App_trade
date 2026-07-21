@@ -27,15 +27,40 @@ const PRICE_INTERVAL = Number(process.env.ALERTS_PRICE_INTERVAL || 45);
 const CAL_INTERVAL = Number(process.env.ALERTS_CAL_INTERVAL || 60);
 const CAL_LEAD_MIN = Number(process.env.ALERTS_CAL_LEAD_MIN || 5); // minutos antes do evento
 
-// Limiar de variação (%) por leitura para considerar "desvio abrupto".
-const THRESHOLDS: Record<string, number> = {
-  XAUUSD: Number(process.env.ALERTS_TH_GOLD || 0.4),
-  BTCUSD: Number(process.env.ALERTS_TH_BTC || 0.8),
-  ETHUSD: Number(process.env.ALERTS_TH_ETH || 1.0),
-  SOLUSD: Number(process.env.ALERTS_TH_SOL || 1.2),
-  EURUSD: Number(process.env.ALERTS_TH_EUR || 0.3),
-  GBPUSD: Number(process.env.ALERTS_TH_GBP || 0.3),
+// Limiar de variação (%) por leitura (~45s) para considerar "desvio abrupto".
+// Valores base calibrados pela volatilidade intrínseca de cada ativo, lidos do
+// .env (fallback para os defaults se ausentes/inválidos).
+const THRESHOLD_DEFAULTS: Record<string, number> = {
+  XAUUSD: 0.15, // Ouro — reage a dados macro e quebras técnicas
+  BTCUSD: 0.4, // Bitcoin — referência, volatilidade moderada
+  ETHUSD: 0.55, // Ethereum — volatilidade intermédia
+  SOLUSD: 0.8, // Solana — beta alto, maior volatilidade
+  EURUSD: 0.15, // FX — fonte diária (raramente dispara intraday)
+  GBPUSD: 0.15,
 };
+
+/** Lê uma variável de ambiente como float; usa o fallback se ausente ou inválida. */
+function envFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Limiares ativos, lidos do process.env em cada chamada (permite ao endpoint
+ * /api/alerts/config refletir a configuração atual).
+ */
+export function getThresholds(): Record<string, number> {
+  return {
+    XAUUSD: envFloat("ALERT_THRESHOLD_GOLD", THRESHOLD_DEFAULTS.XAUUSD),
+    BTCUSD: envFloat("ALERT_THRESHOLD_BTC", THRESHOLD_DEFAULTS.BTCUSD),
+    ETHUSD: envFloat("ALERT_THRESHOLD_ETH", THRESHOLD_DEFAULTS.ETHUSD),
+    SOLUSD: envFloat("ALERT_THRESHOLD_SOL", THRESHOLD_DEFAULTS.SOLUSD),
+    EURUSD: envFloat("ALERT_THRESHOLD_EUR", THRESHOLD_DEFAULTS.EURUSD),
+    GBPUSD: envFloat("ALERT_THRESHOLD_GBP", THRESHOLD_DEFAULTS.GBPUSD),
+  };
+}
 
 async function getJSON(url: string, timeout = 15000): Promise<any> {
   const res = await fetch(url, {
@@ -125,12 +150,14 @@ async function priceTick(): Promise<void> {
     return;
   }
 
+  const thresholds = getThresholds();
   for (const [asset, price] of Object.entries(prices)) {
     if (price == null) continue;
     const prev = s.lastPrices[asset];
     if (prev != null && prev > 0) {
+      // Variação absoluta percentual entre leitura atual e anterior.
       const changePct = ((price - prev) / prev) * 100;
-      const th = THRESHOLDS[asset] ?? 1;
+      const th = thresholds[asset] ?? 1;
       if (Math.abs(changePct) >= th) {
         const dir = changePct > 0 ? "▲ subida" : "▼ queda";
         const level: MarketAlert["level"] = Math.abs(changePct) >= th * 2 ? "critical" : "warning";
