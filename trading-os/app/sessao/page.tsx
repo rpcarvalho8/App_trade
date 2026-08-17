@@ -70,6 +70,12 @@ export default function SessaoPage() {
   const [sleepHours, setSleepHours] = useState("7");
   const [stress, setStress] = useState("3");
   const [grade, setGrade] = useState("B");
+  const [outcome, setOutcome] = useState<"RUNNING" | "WIN" | "LOSS" | "BE">("RUNNING");
+  const [exitPrice, setExitPrice] = useState("");
+  const [pnl, setPnl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [savedId, setSavedId] = useState<number | null>(null);
   const [ctx, setCtx] = useState<SessionCtx | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
@@ -119,6 +125,11 @@ export default function SessaoPage() {
     setEntry("");
     setSl("");
     setTp("");
+    setOutcome("RUNNING");
+    setExitPrice("");
+    setPnl("");
+    setSaveMsg("");
+    setSavedId(null);
   };
 
   const nEntry = Number(entry);
@@ -171,27 +182,81 @@ export default function SessaoPage() {
     setChecks((c) => ({ ...c, [id]: v }));
   };
 
-  const journalHref = (() => {
-    const q = new URLSearchParams({
-      new: "1",
+  const saveTrade = async () => {
+    if (verdict !== "AUTHORIZED") return;
+    if (!entry || !sl || !tp) {
+      setSaveMsg("Preenche entrada, stop e take profit na calculadora.");
+      return;
+    }
+    setSaving(true);
+    setSaveMsg("");
+    const sleepQ = Math.min(10, Math.max(1, Math.round(Number(sleepHours) || 7)));
+    const stressN = Math.min(10, Math.max(1, Math.round(Number(stress) || 3)));
+    const stepsDone = pb.steps
+      .filter((s) => autoChecks[s.id] === "yes")
+      .map((s, i) => `${i + 1}. ${s.label}`)
+      .join(" | ");
+    const payload = {
+      date: ctx?.date || new Date().toISOString().slice(0, 10),
       pair: asset,
+      direction,
       setup: pb.setupName,
       session: pb.defaultSession,
-      direction,
-      risk_percent: riskPct,
-    });
-    if (entry) q.set("entry", entry);
-    if (sl) q.set("stop_loss", sl);
-    if (tp) q.set("take_profit", tp);
-    if (rr != null) q.set("rr_planned", rr.toFixed(2));
-    return `/journal?${q.toString()}`;
-  })();
+      entry: nEntry,
+      stop_loss: nSl,
+      take_profit: nTp,
+      exit_price: outcome === "RUNNING" || !exitPrice ? null : Number(exitPrice),
+      risk_percent: nRisk || pb.defaultRiskPct,
+      pnl: outcome === "RUNNING" ? 0 : Number(pnl || 0),
+      rr_planned: rr != null ? Number(rr.toFixed(2)) : null,
+      rr_real: outcome === "RUNNING" ? null : (rr != null ? Number(rr.toFixed(2)) : null),
+      outcome,
+      htf_bias: direction === "LONG" ? "Bullish" : "Bearish",
+      confluences: `${asset} · ${pb.title}`,
+      entry_reason: `Mesa de Operação — passos confirmados: ${stepsDone}`,
+      shock_timeframe: asset === "XAUUSD" ? "M5" : "M1",
+      management: pb.management.join(" "),
+      tags: "sessao,autorizado",
+      mental_state: grade,
+      followed_plan: 1,
+      sleep_quality: sleepQ,
+      fatigue_level: sleepQ <= 6 ? 7 : 3,
+      stress_level: stressN,
+      anxiety_level: stressN,
+      focus_level: stressN >= 7 ? 4 : 7,
+      confidence_level: grade === "A" ? 8 : grade === "B" ? 6 : 4,
+      emotional_state: grade === "A" || grade === "B" ? "Calmo e focado" : "Normal",
+      pre_session_notes: `Sono ${sleepHours}h · stress ${stress}/10 · nota ${grade}`,
+    };
+    try {
+      const r = await fetch("/api/trades", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json().catch(() => ({})) as { id?: number; error?: string };
+      if (!r.ok) {
+        setSaveMsg("Erro a guardar: " + (d.error || r.status));
+      } else {
+        setSavedId(typeof d.id === "number" ? d.id : null);
+        setSaveMsg("Trade gravado no journal.");
+        setChecks(emptyChecks(pb));
+        setOutcome("RUNNING");
+        setExitPrice("");
+        setPnl("");
+        load(false);
+      }
+    } catch (e: unknown) {
+      setSaveMsg("Erro de rede: " + (e instanceof Error ? e.message : String(e)));
+    }
+    setSaving(false);
+  };
 
   const upcoming = ctx?.calendar?.upcomingHigh || [];
   const price = ctx?.prices?.[asset];
 
   const verdictUI = {
-    AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Executa na corretora e depois regista o trade." },
+    AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Entra na corretora e carrega em Guardar no journal — o registo é criado já com estes dados." },
     WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "Lê o que fazer em cada passo. Só marcas SIM quando for verdade no gráfico — não antecipes." },
     REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um passo falhou. Não há trade. Esperas o próximo setup deste activo." },
     CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
@@ -314,9 +379,13 @@ export default function SessaoPage() {
             Reset checklist
           </button>
           {verdict === "AUTHORIZED" ? (
-            <Link href={journalHref} style={{ background: "#14532d", color: C.green, border: `1px solid ${C.green}`, padding: "8px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
-              Registar trade autorizado →
-            </Link>
+            <button
+              onClick={saveTrade}
+              disabled={saving}
+              style={{ background: "#14532d", color: C.green, border: `1px solid ${C.green}`, padding: "8px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}
+            >
+              {saving ? "A guardar…" : "Guardar no journal"}
+            </button>
           ) : (
             <span style={{ background: C.elevated, color: C.muted, border: `1px solid ${C.border}`, padding: "8px 16px", borderRadius: 6, fontSize: 12 }}>
               Journal bloqueado até autorização
@@ -324,6 +393,29 @@ export default function SessaoPage() {
           )}
         </div>
       </div>
+
+      {(saveMsg || savedId) && (
+        <div style={{
+          background: savedId ? "#052e16" : "#3b1a1a",
+          border: `1px solid ${savedId ? C.green + "55" : C.red + "55"}`,
+          color: savedId ? C.green : "#fca5a5",
+          padding: "10px 14px",
+          borderRadius: 8,
+          fontSize: 12,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+        }}>
+          <span>{saveMsg}{savedId ? ` (#${savedId})` : ""}</span>
+          {savedId && (
+            <Link href="/journal" style={{ color: C.accent, fontSize: 12 }}>
+              Abrir journal (capturas e revisão) →
+            </Link>
+          )}
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16 }}>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
@@ -405,7 +497,7 @@ export default function SessaoPage() {
             <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 12 }}>CALCULADORA R:R / SIZE</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>DIREÇÃO</div>
+                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>DIRECÇÃO</div>
                 <select value={direction} onChange={(e) => setDirection(e.target.value as "LONG" | "SHORT")} style={{ width: "100%" }}>
                   <option value="LONG">LONG</option>
                   <option value="SHORT">SHORT</option>
@@ -449,6 +541,35 @@ export default function SessaoPage() {
                   {size == null ? "—" : size.toLocaleString("pt-PT", { maximumFractionDigits: 4 })}
                 </div>
                 <div style={{ fontSize: 9, color: C.muted }}>{nRisk}% de ${nEquity || 0}</div>
+              </div>
+            </div>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>RESULTADO AO GRAVAR</div>
+              <div style={{ display: "grid", gridTemplateColumns: outcome === "RUNNING" ? "1fr" : "1fr 1fr 1fr", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>ESTADO</div>
+                  <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} style={{ width: "100%" }}>
+                    <option value="RUNNING">Ainda em curso</option>
+                    <option value="WIN">Ganho</option>
+                    <option value="LOSS">Perda</option>
+                    <option value="BE">Break-even</option>
+                  </select>
+                </div>
+                {outcome !== "RUNNING" && (
+                  <>
+                    <div>
+                      <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>SAÍDA</div>
+                      <input type="number" step="any" value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} style={{ width: "100%" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>P&amp;L ($)</div>
+                      <input type="number" step="any" value={pnl} onChange={(e) => setPnl(e.target.value)} style={{ width: "100%" }} />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{ fontSize: 10, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
+                Grava-se {asset}, {pb.setupName}, {direction}, entrada/stop/alvo, rácio e «seguiu o plano». Capturas de ecrã podes acrescentar depois no journal.
               </div>
             </div>
           </div>
