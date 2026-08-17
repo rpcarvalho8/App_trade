@@ -191,10 +191,10 @@ export default function SessaoPage() {
   const price = ctx?.prices?.[asset];
 
   const verdictUI = {
-    AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Gates verdes. Executa no broker e regista o trade." },
-    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "Marca cada passo SIM só quando for verdade. Não antecipes." },
-    REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um gate falhou. Não há trade. Espera o próximo setup." },
-    CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: day?.hitMaxTrades ? "Máximo de trades do dia." : day?.hitDD ? "Drawdown diário atingido." : mentalClosed ? "Estado mental / sono / stress fora das regras." : "Kill-switch ativo." },
+    AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Executa na corretora e depois regista o trade." },
+    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "Lê o que fazer em cada passo. Só marcas SIM quando for verdade no gráfico — não antecipes." },
+    REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um passo falhou. Não há trade. Esperas o próximo setup deste activo." },
+    CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
   }[verdict];
 
   return (
@@ -203,7 +203,7 @@ export default function SessaoPage() {
         <div>
           <div style={{ fontSize: 9, color: C.muted, letterSpacing: 2 }}>TRADING OS</div>
           <div style={{ fontSize: 22, fontWeight: 600, color: C.accent }}>Mesa de Operação</div>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Um ativo, um playbook, gates SIM/NÃO. Sem parágrafos no meio do setup.</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Um activo, um guião. Cada passo diz o que fazer no gráfico e quando marcar SIM ou NÃO.</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {(["XAUUSD", "SOLUSD"] as SessionAsset[]).map((a) => (
@@ -238,7 +238,7 @@ export default function SessaoPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr 1fr", gap: 12 }}>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>PLAYBOOK</div>
+          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>GUIÃO DE HOJE</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>{pb.title}</div>
           <div style={{ fontSize: 11, color: C.secondary, marginTop: 4, lineHeight: 1.5 }}>{pb.tagline}</div>
           <div style={{ fontSize: 10, color: C.muted, marginTop: 10 }}>{pb.sessionWindow}</div>
@@ -258,7 +258,7 @@ export default function SessaoPage() {
             <div style={{ fontSize: 10, color: C.secondary, marginTop: 6 }}>BTC {fmtPrice(ctx.prices.BTCUSD, "XAUUSD")}</div>
           )}
           <div style={{ marginTop: 10, fontSize: 11, color: blackout ? C.red : C.green }}>
-            {blackout ? "BLACKOUT — high-impact ≤ 30 min" : "Calendário: janela livre (30 min)"}
+            {blackout ? "BLOQUEIO — notícia forte nos próximos 30 min" : "Calendário: sem notícia forte nos próximos 30 min"}
           </div>
           <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
             {upcoming.slice(0, 3).map((e, i) => (
@@ -270,24 +270,24 @@ export default function SessaoPage() {
               </div>
             ))}
             {upcoming.length === 0 && !loading && (
-              <div style={{ fontSize: 10, color: C.muted }}>Sem high-impact restante hoje.</div>
+              <div style={{ fontSize: 10, color: C.muted }}>Sem notícias fortes restantes hoje.</div>
             )}
           </div>
         </div>
 
         <div style={{ background: sessionClosed ? "#3b1a1a" : C.card, border: `1px solid ${sessionClosed ? C.red + "66" : C.border}`, borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>KILL-SWITCH HOJE</div>
+          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>LIMITE DO DIA</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
             <div>
               <div style={{ fontSize: 9, color: C.muted }}>TRADES</div>
               <div style={{ color: day?.hitMaxTrades ? C.red : "#e2e8f0", fontWeight: 700 }}>{day?.count ?? 0}/{pb.maxTrades}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: C.muted }}>LOSSES SEG.</div>
+              <div style={{ fontSize: 9, color: C.muted }}>PERDAS SEGUIDAS</div>
               <div style={{ color: day?.needPause ? C.red : "#e2e8f0", fontWeight: 700 }}>{day?.consecutiveLosses ?? 0}/{pb.pauseAfterLosses}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: C.muted }}>DD (risco perdido)</div>
+              <div style={{ fontSize: 9, color: C.muted }}>PERDAS DO DIA (risco)</div>
               <div style={{ color: day?.hitDD ? C.red : "#e2e8f0", fontWeight: 700 }}>{Number(day?.lossRisk || 0).toFixed(1)}% / {pb.maxDailyDD}%</div>
             </div>
             <div>
@@ -296,7 +296,7 @@ export default function SessaoPage() {
             </div>
           </div>
           {day?.needPause && !day?.closed && (
-            <div style={{ fontSize: 10, color: C.amber, marginTop: 10 }}>Pausa {pb.pauseMinutes} min após {pb.pauseAfterLosses} losses.</div>
+            <div style={{ fontSize: 10, color: C.amber, marginTop: 10 }}>Pausa de {pb.pauseMinutes} min depois de {pb.pauseAfterLosses} perdas seguidas.</div>
           )}
         </div>
       </div>
@@ -327,7 +327,7 @@ export default function SessaoPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16 }}>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 14 }}>CHECKLIST SEQUENCIAL — PASSO N SÓ DEPOIS DE N-1 = SIM</div>
+          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 14 }}>LISTA DE PASSOS — SÓ AVANÇAS DEPOIS DE MARCAR SIM NO ANTERIOR</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {pb.steps.map((step, i) => {
               const locked = i > 0 && autoChecks[pb.steps[i - 1].id] !== "yes";
@@ -345,20 +345,29 @@ export default function SessaoPage() {
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                    <div style={{ display: "flex", gap: 10 }}>
+                    <div style={{ display: "flex", gap: 10, minWidth: 0 }}>
                       <div style={{
                         width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
                         border: `1px solid ${val === "yes" ? C.green : val === "no" ? C.red : C.accent}`,
                         color: val === "yes" ? C.green : val === "no" ? C.red : C.accent,
                         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700,
                       }}>{i + 1}</div>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{step.label}</div>
-                        <div style={{ fontSize: 11, color: C.secondary, marginTop: 4, lineHeight: 1.5 }}>{step.help}</div>
-                        {newsLockedYes && <div style={{ fontSize: 10, color: C.red, marginTop: 4 }}>Bloqueado pelo calendário.</div>}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.35 }}>{step.label}</div>
+                        <div style={{ fontSize: 10, color: C.accent, marginTop: 6 }}>Onde: {step.chart}</div>
+                        <div style={{ fontSize: 12, color: C.secondary, marginTop: 6, lineHeight: 1.55 }}>
+                          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>O que fazer. </span>{step.do}
+                        </div>
+                        <div style={{ fontSize: 11, color: C.green, marginTop: 8, lineHeight: 1.5 }}>
+                          <span style={{ fontWeight: 700 }}>Marca SIM se: </span>{step.yesIf}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4, lineHeight: 1.5 }}>
+                          <span style={{ fontWeight: 700 }}>Marca NÃO se: </span>{step.noIf}
+                        </div>
+                        {newsLockedYes && <div style={{ fontSize: 11, color: C.red, marginTop: 8 }}>Bloqueado: há uma notícia de alto impacto nos próximos 30 minutos.</div>}
                         {step.kind === "rr" && rr != null && (
-                          <div style={{ fontSize: 10, color: rrOk ? C.green : C.red, marginTop: 4 }}>
-                            Calculadora: 1:{rr.toFixed(2)} {rrOk ? "≥ mínimo" : `< ${pb.minRR}`}
+                          <div style={{ fontSize: 11, color: rrOk ? C.green : C.red, marginTop: 8 }}>
+                            Resultado da calculadora: 1:{rr.toFixed(2)} {rrOk ? "(atinge o mínimo)" : `(abaixo do mínimo ${pb.minRR})`}
                           </div>
                         )}
                       </div>
@@ -445,7 +454,7 @@ export default function SessaoPage() {
           </div>
 
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 12 }}>GATE MENTAL</div>
+            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 12 }}>ESTADO PARA OPERAR</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               <div>
                 <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>SONO (h)</div>
@@ -463,16 +472,16 @@ export default function SessaoPage() {
               </div>
             </div>
             {mentalClosed && (
-              <div style={{ fontSize: 11, color: C.red, marginTop: 10 }}>Sessão fechada: sono &lt; 6h, stress &gt; 7 ou Grade D.</div>
+              <div style={{ fontSize: 11, color: C.red, marginTop: 10 }}>Sessão fechada: menos de 6 horas de sono, stress acima de 7, ou nota D.</div>
             )}
           </div>
 
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>GESTÃO (depois de entrar)</div>
+            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>GESTÃO (depois de entrares)</div>
             {pb.management.map((m) => (
               <div key={m} style={{ fontSize: 11, color: C.secondary, lineHeight: 1.6 }}>• {m}</div>
             ))}
-            <div style={{ fontSize: 9, color: C.red, letterSpacing: 1.5, margin: "12px 0 6px" }}>INVALIDAÇÃO</div>
+            <div style={{ fontSize: 9, color: C.red, letterSpacing: 1.5, margin: "12px 0 6px" }}>SAI / NÃO ENTRES SE</div>
             {pb.invalidation.map((m) => (
               <div key={m} style={{ fontSize: 11, color: "#fca5a5", lineHeight: 1.6 }}>• {m}</div>
             ))}
