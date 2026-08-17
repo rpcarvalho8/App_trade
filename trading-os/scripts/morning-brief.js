@@ -136,8 +136,9 @@ async function fetchCrypto() {
 }
 
 async function fetchYields() {
+  const year = new Date().getFullYear();
   const csv = await getText(
-    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv"
+    `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/${year}/all?type=daily_treasury_yield_curve&field_tdr_date_value=${year}&page&_format=csv`
   );
   const lines = csv.trim().split("\n");
   const header = lines[0].split(",").map((h) => h.replace(/"/g, "").trim());

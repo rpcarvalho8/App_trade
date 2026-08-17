@@ -7,6 +7,7 @@ import AlertToaster from "./components/AlertToaster";
 
 const navItems = [
   { href:"/", label:"Overview", icon:"◈" },
+  { href:"/sessao", label:"Sessão", icon:"▶" },
   { href:"/morning-brief", label:"Morning Brief", icon:"🌅" },
   { href:"/journal", label:"Journal", icon:"◉" },
   { href:"/weekly-journal", label:"Journal Semanal", icon:"📅" },
@@ -75,7 +76,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <span style={{ color:"#64748b",fontSize:10 }}>Journal + AI Analysis + Exchanges</span>
           <div style={{ marginLeft:"auto",display:"flex",gap:16,alignItems:"center" }}>
             <TopbarStats />
-            <Link href="/journal" style={{ background:"#0f4c3a",color:"#4af0c4",border:"1px solid #4af0c4",padding:"4px 12px",borderRadius:4,textDecoration:"none",fontSize:11 }}>+ Trade</Link>
+            <Link href="/sessao" style={{ background:"#0f4c3a",color:"#4af0c4",border:"1px solid #4af0c4",padding:"4px 12px",borderRadius:4,textDecoration:"none",fontSize:11 }}>▶ Sessão</Link>
+            <Link href="/journal" style={{ background:"#1e293b",color:"#94a3b8",border:"1px solid #1e2d45",padding:"4px 12px",borderRadius:4,textDecoration:"none",fontSize:11 }}>+ Trade</Link>
             <Link href="/exchanges" style={{ background:"#1e293b",color:"#94a3b8",border:"1px solid #1e2d45",padding:"4px 12px",borderRadius:4,textDecoration:"none",fontSize:11 }}>⇄ Exchanges</Link>
           </div>
         </div>

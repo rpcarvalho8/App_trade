@@ -112,6 +112,30 @@ export default function PerformancePage() {
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>ANÁLISE POR ATIVO</div>
+          {(stats.byPair||[]).length>0?(
+            <table>
+              <thead><tr><th>PAR</th><th>TRADES</th><th>WIN RATE</th><th>AVG RR</th><th>P&L</th></tr></thead>
+              <tbody>
+                {(stats.byPair||[]).map((x: any)=>{
+                  const wr=x.total>0?Number(((x.wins/x.total)*100).toFixed(1)):0;
+                  const pnl=Number(x.pnl||0);
+                  return (
+                    <tr key={x.pair}>
+                      <td style={{color:"#e2e8f0",fontWeight:500}}>{x.pair}</td>
+                      <td>{x.total}</td>
+                      <td style={{color:wr>=60?C.green:wr>=45?C.amber:C.red,fontWeight:500}}>{wr}%</td>
+                      <td style={{color:C.amber}}>1:{Number(x.avg_rr||0).toFixed(2)}</td>
+                      <td style={{color:pnl>=0?C.green:C.red,fontWeight:600}}>${pnl.toFixed(0)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ):<div style={{color:C.muted,fontSize:11}}>Sem dados por par ainda.</div>}
+        </div>
+
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
           <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>ANÁLISE POR SETUP</div>
           {setupStats.length>0?(
             <table>
@@ -135,7 +159,9 @@ export default function PerformancePage() {
             </table>
           ):<div style={{color:C.muted,fontSize:11}}>Sem dados de setups ainda.</div>}
         </div>
+      </div>
 
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
           <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>ESTADO MENTAL vs PERFORMANCE</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>

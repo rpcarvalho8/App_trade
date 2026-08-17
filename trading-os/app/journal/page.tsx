@@ -1,9 +1,11 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { JOURNAL_PAIRS, canonicalizePair, isSessionPair } from "@/lib/pairs";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",purple:"#c084fc",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
 
-const PAIRS = ["EUR/USD","GBP/USD","USD/JPY","GBP/JPY","USD/CHF","AUD/USD","NZD/USD","EUR/GBP","EUR/JPY", "USD/CAD","NAS100","US500","GER40","GOLD","BTC/USD","ETH/USD", "SOL/USD", "XRP/USD","Outro"];
+const PAIRS = [...JOURNAL_PAIRS];
 const SESSIONS = ["London","NY","Asia","London+NY","Pre-Market","Overnight"];
 const WYCKOFF_PHASES = ["","Acumulação Fase A","Acumulação Fase B","Acumulação Fase C (Spring)","Acumulação Fase D","Acumulação Fase E","Distribuição Fase A","Distribuição Fase B","Distribuição Fase C (UTAD)","Distribuição Fase D","Distribuição Fase E","Re-Acumulação","Re-Distribuição"];
 const WYCKOFF_EVENTS = ["","Spring","Test de Spring","UTAD","Test de UTAD","SOS (Sign of Strength)","SOW (Sign of Weakness)","LPS (Last Point of Support)","LPSY (Last Point of Supply)","BUEC","BU (BackUp)","JAC","SC (Selling Climax)","BC (Buying Climax)","AR (Auto Rally)","ST (Secondary Test)","UA (Upthrust Action)","mSOW (minor SOW)"];
@@ -235,12 +237,23 @@ function RefPanel({ onClose }: { onClose: () => void }) {
 function ScreenshotUpload({ label, value, onChange }: any) {
   const ref = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [upErr, setUpErr] = useState("");
   const upload = async (file: File) => {
     setUploading(true);
-    const fd = new FormData(); fd.append("file",file);
-    const res = await fetch("/api/upload",{method:"POST",body:fd});
-    const d = await res.json();
-    onChange(d.url||""); setUploading(false);
+    setUpErr("");
+    try {
+      const fd = new FormData(); fd.append("file",file);
+      const res = await fetch("/api/upload",{method:"POST",body:fd});
+      const d = await res.json().catch(()=>({}));
+      if (!res.ok || !d.url) {
+        setUpErr(d.error || `Upload falhou (${res.status})`);
+      } else {
+        onChange(d.url);
+      }
+    } catch (e: any) {
+      setUpErr(e?.message || "Erro de rede no upload");
+    }
+    setUploading(false);
   };
   return (
     <div style={{ border:`1px dashed ${value?"#2d4a6b":C.border}`,borderRadius:6,padding:8,cursor:"pointer",minHeight:80,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,background:C.elevated }}
@@ -250,7 +263,7 @@ function ScreenshotUpload({ label, value, onChange }: any) {
       <input ref={ref} type="file" accept="image/*" style={{display:"none"}} onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/>
       {value
         ?<><img src={value} alt={label} style={{maxHeight:90,maxWidth:"100%",borderRadius:4,objectFit:"contain"}}/><div style={{fontSize:8,color:C.accent}}>Clica para substituir</div></>
-        :<><div style={{fontSize:14,color:C.muted}}>📷</div><div style={{fontSize:9,color:C.muted,textAlign:"center"}}>{uploading?"A carregar...":"Clica ou arrasta"}</div><div style={{fontSize:8,color:"#2d4a6b"}}>{label}</div></>
+        :<><div style={{fontSize:14,color:C.muted}}>📷</div><div style={{fontSize:9,color:C.muted,textAlign:"center"}}>{uploading?"A carregar...":"Clica ou arrasta"}</div><div style={{fontSize:8,color:"#2d4a6b"}}>{label}</div>{upErr&&<div style={{fontSize:8,color:C.red,textAlign:"center"}}>{upErr}</div>}</>
       }
     </div>
   );
@@ -281,7 +294,7 @@ function F({ label, children }: any) {
 }
 
 const blank = () => ({
-  date:new Date().toISOString().slice(0,10), pair:"EUR/USD", direction:"LONG", setup:"", session:"London",
+  date:new Date().toISOString().slice(0,10), pair:"XAUUSD", direction:"LONG", setup:"", session:"London",
   entry:"", exit_price:"", stop_loss:"", take_profit:"",
   risk_percent:"1", pnl:"", rr_planned:"", rr_real:"", outcome:"WIN",
   elliott_wave:"", wyckoff_phase:"", wyckoff_event:"", imbalance_zone:"", htf_bias:"",
@@ -296,6 +309,15 @@ const blank = () => ({
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function JournalPage() {
+  return (
+    <Suspense fallback={<div style={{color:"#475569",padding:40,textAlign:"center"}}>A carregar journal...</div>}>
+      <JournalInner />
+    </Suspense>
+  );
+}
+
+function JournalInner() {
+  const searchParams = useSearchParams();
   const [trades, setTrades] = useState<any[]>([]);
   const [setupNames, setSetupNames] = useState<string[]>([]);
   const [form, setForm] = useState<any>(blank());
@@ -307,15 +329,35 @@ export default function JournalPage() {
   const [msg, setMsg] = useState("");
   const [selected, setSelected] = useState<any>(null);
   const [showRef, setShowRef] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
 
   const load = () => {
-    fetch("/api/trades?limit=200").then(r=>r.json()).then(setTrades).catch(()=>{});
-    fetch("/api/setups").then(r=>r.json()).then(s=>{
-      const names = s.map((x:any)=>x.name);
-      setSetupNames(names);
-    }).catch(()=>{});
+    Promise.all([
+      fetch("/api/trades?limit=200").then(r=>{ if(!r.ok) throw new Error("trades "+r.status); return r.json(); }),
+      fetch("/api/setups").then(r=>{ if(!r.ok) throw new Error("setups "+r.status); return r.json(); }),
+    ]).then(([t,s])=>{
+      setTrades(t);
+      setSetupNames(s.map((x:any)=>x.name));
+      setLoadErr("");
+    }).catch(e=>setLoadErr(String(e?.message||e)));
   };
   useEffect(()=>{load();},[]);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    const next = blank();
+    const keys = ["pair","setup","session","direction","entry","stop_loss","take_profit","rr_planned","risk_percent"] as const;
+    keys.forEach((k) => {
+      const v = searchParams.get(k);
+      if (v) (next as any)[k] = k === "pair" ? canonicalizePair(v) : v;
+    });
+    if (next.pair) next.pair = canonicalizePair(next.pair);
+    setForm(next);
+    setEditingId(null);
+    setTab("basic");
+    setShowForm(true);
+    setSelected(null);
+  }, [searchParams]);
 
   const set = (k:string) => (e:any) => setForm((f:any)=>({...f,[k]:e.target?.value??e}));
   const setVal = (k:string,v:any) => setForm((f:any)=>({...f,[k]:v}));
@@ -334,7 +376,7 @@ export default function JournalPage() {
 
   const openEdit = (t: any) => {
     setForm({
-      date:t.date||"", pair:t.pair||"EUR/USD", direction:t.direction||"LONG",
+      date:t.date||"", pair:canonicalizePair(t.pair)||"XAUUSD", direction:t.direction||"LONG",
       setup:t.setup||"", session:t.session||"London",
       entry:t.entry||"", exit_price:t.exit_price||"", stop_loss:t.stop_loss||"",
       take_profit:t.take_profit||"", risk_percent:t.risk_percent||"1",
@@ -366,6 +408,7 @@ export default function JournalPage() {
     setSaving(true); setMsg("");
     const payload = {
       ...form,
+      pair: canonicalizePair(form.pair) || form.pair,
       entry:Number(form.entry)||0,
       exit_price:form.exit_price?Number(form.exit_price):null,
       stop_loss:Number(form.stop_loss)||0,
@@ -427,7 +470,11 @@ export default function JournalPage() {
 
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:20,paddingRight:showRef?430:0,transition:"padding-right 0.2s" }}>
-      {showRef && <RefPanel onClose={()=>setShowRef(false)} />}
+      {loadErr && (
+        <div style={{ background:"#3b1a1a",border:"1px solid #f8717155",color:"#fca5a5",padding:"8px 12px",borderRadius:6,fontSize:12 }}>
+          Falha a carregar dados: {loadErr}
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
@@ -463,7 +510,7 @@ export default function JournalPage() {
           {/* Tabs */}
           <div style={{ display:"flex",padding:"0 16px",paddingTop:12,borderBottom:`1px solid ${C.border}`,gap:4 }}>
             <TabBtn id="basic" label="① Básico"/>
-            <TabBtn id="technical" label="② Elliott + Wyckoff + SMC"/>
+            <TabBtn id="technical" label={isSessionPair(form.pair) ? "② Estudo (opcional)" : "② Elliott + Wyckoff + SMC"}/>
             <TabBtn id="psychological" label="③ Estado Mental"/>
             <TabBtn id="screenshots" label="④ Screenshots"/>
           </div>
@@ -477,6 +524,7 @@ export default function JournalPage() {
                   <F label="Par">
                     <select value={form.pair} onChange={set("pair")} style={{width:"100%"}}>
                       {PAIRS.map(p=><option key={p}>{p}</option>)}
+                      {form.pair && !PAIRS.includes(form.pair) && <option value={form.pair}>{form.pair}</option>}
                     </select>
                   </F>
                   <F label="Direcção">
@@ -537,7 +585,9 @@ export default function JournalPage() {
                 </div>
 
                 <div style={{ display:"flex",justifyContent:"flex-end" }}>
-                  <button onClick={()=>setTab("technical")} style={{ background:"#1e3a5f",color:C.blue,border:"1px solid #2d4a6b",padding:"6px 14px",borderRadius:4,fontSize:11 }}>Seguinte: Técnico →</button>
+                  <button onClick={()=>setTab(isSessionPair(form.pair)?"psychological":"technical")} style={{ background:"#1e3a5f",color:C.blue,border:"1px solid #2d4a6b",padding:"6px 14px",borderRadius:4,fontSize:11 }}>
+                    {isSessionPair(form.pair)?"Seguinte: Mental →":"Seguinte: Técnico →"}
+                  </button>
                 </div>
               </div>
             )}
@@ -545,6 +595,11 @@ export default function JournalPage() {
             {/* ── TAB 2: TECHNICAL ── */}
             {tab==="technical" && (
               <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+                {isSessionPair(form.pair) && (
+                  <div style={{ background:"#0a1929",border:`1px solid ${C.blue}44`,borderRadius:8,padding:12,fontSize:12,color:C.secondary,lineHeight:1.6 }}>
+                    Campos de estudo — opcionais na sessão {form.pair}. Os gates de entrada ficam na <a href="/sessao" style={{color:C.accent}}>Mesa de Operação</a>. Podes saltar para o estado mental.
+                  </div>
+                )}
                 <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:-6 }}>
                   <button onClick={()=>setShowRef(r=>!r)} style={{ fontSize:10,color:C.blue,background:"#1e3a5f",border:"1px solid #2d4a6b",padding:"4px 12px",borderRadius:4,cursor:"pointer" }}>
                     📚 {showRef?"Fechar":"Abrir"} Referência
