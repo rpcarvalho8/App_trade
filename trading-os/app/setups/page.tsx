@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",purple:"#c084fc",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
 
@@ -52,13 +53,19 @@ export default function SetupsPage() {
   const [form, setForm] = useState<any>({ name:"",category:"Custom",description:"",steps:"",timeframes:"",markets:"",confluence:"",invalidation:"",image_refs:"[]" });
   const [activeTab, setActiveTab] = useState<"main"|"ict"|"all">("main");
 
+  const [loadErr, setLoadErr] = useState("");
+
   const load = () => {
-    fetch("/api/setups").then(r=>r.json()).then(setSetups).catch(()=>{});
-    fetch("/api/stats").then(r=>r.json()).then(s=>{
+    Promise.all([
+      fetch("/api/setups").then(r=>{ if(!r.ok) throw new Error("setups "+r.status); return r.json(); }),
+      fetch("/api/stats").then(r=>{ if(!r.ok) throw new Error("stats "+r.status); return r.json(); }),
+    ]).then(([setupsData, s])=>{
+      setSetups(setupsData);
       const m: any={};
       (s.bySetup||[]).forEach((x:any)=>{m[x.setup]=x;});
       setPerfMap(m);
-    }).catch(()=>{});
+      setLoadErr("");
+    }).catch(e=>setLoadErr(String(e?.message||e)));
   };
   useEffect(()=>{load();},[]);
 
@@ -102,15 +109,32 @@ export default function SetupsPage() {
     <div style={{ display:"flex",flexDirection:"column",gap:20 }}>
       {modal && <ImgModal src={modal.src} label={modal.label} onClose={()=>setModal(null)} />}
 
+      {loadErr && (
+        <div style={{ background:"#3b1a1a",border:`1px solid ${C.red}55`,color:"#fca5a5",padding:"8px 12px",borderRadius:6,fontSize:12 }}>
+          Falha a carregar setups: {loadErr}
+        </div>
+      )}
+
+      <div style={{ background:"#070b14",border:`1px solid ${C.amber}44`,borderRadius:10,padding:14,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap" }}>
+        <div>
+          <div style={{ fontSize:9,color:C.amber,letterSpacing:2,marginBottom:4 }}>MESA DE OPERAÇÃO</div>
+          <div style={{ fontSize:13,color:"#e2e8f0" }}>XAUUSD — London Structure · SOLUSD — SMC 3-Step. Checklist sequencial, não parágrafos.</div>
+        </div>
+        <Link href="/sessao" style={{ background:"#3b2a05",color:C.amber,border:`1px solid ${C.amber}`,padding:"7px 14px",borderRadius:4,fontSize:12,textDecoration:"none",fontWeight:600 }}>Ir para /sessao</Link>
+      </div>
+
       <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
         <div>
           <div style={{ fontSize:9,color:C.muted,letterSpacing:2 }}>TRADING OS</div>
           <div style={{ fontSize:22,fontWeight:600,color:C.accent }}>Setups & Estratégias</div>
-          <div style={{ fontSize:11,color:C.muted,marginTop:2 }}>Metodologia completa: Wyckoff + Elliott + ICT</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Operação: XAUUSD + SOLUSD na Mesa. O resto é biblioteca de estudo.</div>
         </div>
-        <button onClick={()=>{setShowForm(f=>!f);setEditing(null);}} style={{ background:"#0f4c3a",color:C.accent,border:`1px solid ${C.accent}`,padding:"7px 16px",borderRadius:4,fontSize:12 }}>
-          {showForm&&!editing?"✕ Fechar":"+ Novo Setup"}
-        </button>
+        <div style={{ display:"flex", gap:8 }}>
+          <Link href="/sessao" style={{ background:"#0f4c3a",color:C.accent,border:`1px solid ${C.accent}`,padding:"7px 16px",borderRadius:4,fontSize:12,textDecoration:"none" }}>▶ Abrir sessão</Link>
+          <button onClick={()=>{setShowForm(f=>!f);setEditing(null);}} style={{ background:"#0f4c3a",color:C.accent,border:`1px solid ${C.accent}`,padding:"7px 16px",borderRadius:4,fontSize:12 }}>
+            {showForm&&!editing?"✕ Fechar":"+ Novo Setup"}
+          </button>
+        </div>
       </div>
 
       {/* MAIN SETUPS HERO */}
