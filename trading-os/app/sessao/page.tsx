@@ -176,6 +176,27 @@ export default function SessaoPage() {
   else if (anyNo) verdict = "REJECT";
   else if (allYes && rrOk && !day?.needPause) verdict = "AUTHORIZED";
 
+  const pendingStep = pb.steps.find((s) => autoChecks[s.id] !== "yes" && autoChecks[s.id] !== "no");
+  const failedStep = pb.steps.find((s) => autoChecks[s.id] === "no");
+  let whyNot: string | null = null;
+  if (sessionClosed) {
+    if (mentalClosed) whyNot = "Sessão fechada: sono abaixo de 6 h, stress acima de 7 ou nota D.";
+    else if (day?.hitMaxTrades) whyNot = "Já atingiste o máximo de trades deste activo hoje.";
+    else if (day?.hitDD) whyNot = "O limite de perdas do dia neste activo foi atingido.";
+    else whyNot = "A sessão deste activo está encerrada.";
+  } else if (day?.needPause) {
+    whyNot = `Pausa de ${pb.pauseMinutes} min depois de ${pb.pauseAfterLosses} perdas seguidas.`;
+  } else if (failedStep) {
+    whyNot = `Há um passo a NÃO: ${failedStep.label}`;
+  } else if (pendingStep) {
+    whyNot = `Ainda falta marcar SIM neste passo: ${pendingStep.label}`;
+  } else if (!entry || !sl || !tp) {
+    whyNot = "Preenche entrada, stop e take profit na calculadora (coluna da direita).";
+  } else if (!rrOk) {
+    whyNot = `O rácio lucro/risco tem de ser pelo menos 1:${pb.minRR}.`;
+  }
+  const canSave = whyNot == null;
+
   const setCheck = (id: string, v: Check) => {
     const step = pb.steps.find((s) => s.id === id);
     if (step?.kind === "news" && blackout && v === "yes") return;
@@ -183,9 +204,8 @@ export default function SessaoPage() {
   };
 
   const saveTrade = async () => {
-    if (verdict !== "AUTHORIZED") return;
-    if (!entry || !sl || !tp) {
-      setSaveMsg("Preenche entrada, stop e take profit na calculadora.");
+    if (!canSave) {
+      setSaveMsg(whyNot || "Ainda não podes gravar.");
       return;
     }
     setSaving(true);
@@ -257,13 +277,13 @@ export default function SessaoPage() {
 
   const verdictUI = {
     AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Entra na corretora e carrega em Guardar no journal — o registo é criado já com estes dados." },
-    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "Lê o que fazer em cada passo. Só marcas SIM quando for verdade no gráfico — não antecipes." },
+    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "O botão Guardar no journal está sempre visível (topo, calculadora e barra de baixo). Fica activo quando todos os passos estiverem a SIM e a calculadora tiver entrada, stop e alvo." },
     REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um passo falhou. Não há trade. Esperas o próximo setup deste activo." },
     CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
   }[verdict];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 88 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 9, color: C.muted, letterSpacing: 2 }}>TRADING OS</div>
@@ -370,27 +390,37 @@ export default function SessaoPage() {
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: verdictUI.color, letterSpacing: 1 }}>{verdictUI.label}</div>
           <div style={{ fontSize: 12, color: C.secondary, marginTop: 4 }}>{verdictUI.hint}</div>
+          {whyNot && (
+            <div style={{ fontSize: 12, color: C.amber, marginTop: 8, maxWidth: 560, lineHeight: 1.45 }}>
+              Para activar o botão: {whyNot}
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={() => setChecks(emptyChecks(pb))}
+            onClick={() => { setChecks(emptyChecks(pb)); setSaveMsg(""); setSavedId(null); }}
             style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border}`, padding: "8px 14px", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
           >
-            Reset checklist
+            Limpar passos
           </button>
-          {verdict === "AUTHORIZED" ? (
-            <button
-              onClick={saveTrade}
-              disabled={saving}
-              style={{ background: "#14532d", color: C.green, border: `1px solid ${C.green}`, padding: "8px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}
-            >
-              {saving ? "A guardar…" : "Guardar no journal"}
-            </button>
-          ) : (
-            <span style={{ background: C.elevated, color: C.muted, border: `1px solid ${C.border}`, padding: "8px 16px", borderRadius: 6, fontSize: 12 }}>
-              Journal bloqueado até autorização
-            </span>
-          )}
+          <button
+            onClick={saveTrade}
+            disabled={saving || !canSave}
+            title={whyNot || "Grava este trade no journal"}
+            style={{
+              background: canSave ? "#14532d" : C.elevated,
+              color: canSave ? C.green : C.muted,
+              border: `1px solid ${canSave ? C.green : C.border}`,
+              padding: "10px 18px",
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 800,
+              cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
+              opacity: canSave ? 1 : 0.85,
+            }}
+          >
+            {saving ? "A guardar…" : "Guardar no journal"}
+          </button>
         </div>
       </div>
 
@@ -571,6 +601,27 @@ export default function SessaoPage() {
               <div style={{ fontSize: 10, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
                 Grava-se {asset}, {pb.setupName}, {direction}, entrada/stop/alvo, rácio e «seguiu o plano». Capturas de ecrã podes acrescentar depois no journal.
               </div>
+              {whyNot && (
+                <div style={{ fontSize: 12, color: C.amber, marginTop: 10, lineHeight: 1.45 }}>{whyNot}</div>
+              )}
+              <button
+                onClick={saveTrade}
+                disabled={saving || !canSave}
+                style={{
+                  marginTop: 12,
+                  width: "100%",
+                  background: canSave ? "#14532d" : "#1e293b",
+                  color: canSave ? C.green : C.secondary,
+                  border: `2px solid ${canSave ? C.green : C.border}`,
+                  padding: "14px 16px",
+                  borderRadius: 8,
+                  fontSize: 15,
+                  fontWeight: 800,
+                  cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
+                }}
+              >
+                {saving ? "A guardar…" : "Guardar no journal"}
+              </button>
             </div>
           </div>
 
@@ -608,6 +659,42 @@ export default function SessaoPage() {
             ))}
           </div>
         </div>
+      </div>
+
+      <div style={{
+        position: "sticky",
+        bottom: 0,
+        zIndex: 30,
+        margin: "8px -4px -8px",
+        background: "#050810",
+        borderTop: `1px solid ${canSave ? C.green + "66" : C.border}`,
+        padding: "12px 14px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+      }}>
+        <div style={{ fontSize: 12, color: canSave ? C.green : C.amber, lineHeight: 1.45, flex: 1, minWidth: 200 }}>
+          {canSave ? "Podes gravar. O trade vai para o journal com os dados desta página." : (whyNot || "Completa os passos e a calculadora.")}
+        </div>
+        <button
+          onClick={saveTrade}
+          disabled={saving || !canSave}
+          style={{
+            background: canSave ? "#14532d" : "#1e293b",
+            color: canSave ? C.green : C.secondary,
+            border: `2px solid ${canSave ? C.green : C.border}`,
+            padding: "12px 22px",
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 800,
+            cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
+            flexShrink: 0,
+          }}
+        >
+          {saving ? "A guardar…" : "Guardar no journal"}
+        </button>
       </div>
     </div>
   );
