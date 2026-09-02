@@ -335,3 +335,80 @@ Se falhar o 3 ou o 4, não entra no quadro principal.
 - **Não** implementar LUMEN dentro de `App_trade`.
 - **Não** usar `condominio_buildingmind_v2`.
 - A `dev` continua a ser o prédio. Este documento não a altera.
+
+---
+
+## 9. Resposta ao fundador (2026-09-02) — orquestra, módulos 2–3, Sevilha
+
+Intenção confirmada: produto **clean, marcante, fácil**; **5 LLMs coordenados** para o edifício correr quase sozinho; módulos 2 (ingestão) e 3 (QR) como salto de categoria; paleta de Sevilha **no layout**, não só no Miro.
+
+### A versão filtrada (secções 0–8) é clean e escalável?
+
+**Sim, para o chão:** um domínio genérico, CSV+banco, convites, gavetas, um PWA. Sem isso, 5 modelos não tornam o produto escalável — tornam 5 formas de errar no prédio errado.
+
+**Não, se for o produto inteiro que queres.** Essa versão **adiou** de propósito a orquestra e a pele. Tu queres-as no centro. Então o produto não é “3 ecrãs e o resto depois”. É:
+
+> **Uma superfície de vidro (módulos 2 + 3 + duas vistas). Por baixo, uma orquestra. O vizinho nunca vê os músicos.**
+
+Isto *pode* ser clean. Deixa de ser no instante em que existem 5 “agentes” no menu, 5 cores a gritar, ou um email jurídico a sair sozinho.
+
+### Os 5 LLMs — como é que isto é Apple e não um laboratório
+
+Não são 5 produtos. São **5 especialidades + 1 maestro + 1 memória do prédio**.
+
+```
+  Foto / PDF / QR / voz / email / banco
+                    ↓
+           MAESTRO (roteia + pede confirmação)
+                    ↓
+     ┌──────┬──────┬──────┬──────┬──────┐
+     Comum. Finan. Juríd. Orçam. Manut.
+     └──────┴──────┴──────┴──────┴──────┘
+                    ↓
+         Memória única do condomínio
+         (frações, gavetas, actas, tickets)
+                    ↓
+     Só o irreversível sobe ao ecrã:
+     pagar, enviar, publicar acta, convocar
+```
+
+| Especialidade | Já na `dev` | Autonomia honesta |
+|---------------|-------------|-------------------|
+| Comunicação | Inbox + tickets, rascunho+aprovar | Triage sozinha; **envio** só com toque |
+| Financeiro | Matriz + LLM fallback | Match sozinho acima de limiar; o resto numa lista de 3 linhas |
+| Jurídico | Rascunho de email, **sem RAG** | Citar regulamento **deste** prédio; nunca “o Código Civil disse, enviei” |
+| Orçamentos | Não existe | Pedir 3 cotações = fase 2; no v1 só **arquivo** de propostas |
+| Manutenção | Pedido+foto, **sem IoT** | Foto → ticket. Sensores = outro produto |
+
+**Contrato de autonomia:** o edifício é autónomo quando o admin abre a app **uma vez por semana** e confirma 3 coisas. Não quando 5 chats correm sozinhos.
+
+**Coordenação (o que falta na `dev`):** os `*-llm.ts` são ilhas. O maestro precisa de: um `BuildingEvent` (movimento, email, foto, áudio), memória partilhada, e **proibição** de um especialista escrever na gaveta de outro sem passar no livro.
+
+Sem F1 (prédio em configuração, não em TypeScript), a orquestra só toca a Fonte.
+
+### Módulos 2 e 3 — sim, são o outro patamar
+
+Concordância total. São a diferença entre “software do meu prédio” e produto.
+
+- **2** sem confirmação humana no dinheiro = magia falsa.  
+- **3** sem o módulo 2 = QR para um prédio que o vizinho teve de criar à mão. Os dois juntos.
+
+Isto é prioridade de mercado nº 1. A orquestra alimenta o 2 (lê o PDF). O 3 não precisa de LLM.
+
+### Sevilha no layout — clean **e** marcante, com uma regra
+
+Sim, pode. O dark Linear actual é competente e esquecível. Um pátio de Sevilha é marcante **porque está quase vazio**.
+
+Regra de layout (uma só):
+
+- **Tela:** creme / branco salmão (`#FAEDCD`)  
+- **Uma** cor de acção: coral pôr do sol  
+- **Uma** cor de estrutura: terracota nos títulos / QR  
+- Amarelo Sevilha e telha escura: **badge e dinheiro**, nunca fundo  
+- Muito ar. Tipografia grande nos euros. Zero sidebar de 15 itens  
+
+Se usares as 5 cores da paleta ao mesmo tempo, deixa de ser Sevilha e passa a souvenir. Clean marcante = iPhone branco com um pormenor de azulejo, não um poster de turismo.
+
+### Veredicto em uma linha
+
+A versão das secções 0–8 é o **esqueleto que escala**. A tua intenção (orquestra + 2 + 3 + Sevilha) é o **produto que as pessoas sentem** — desde que a orquestra fique no porão, o jurídico não envie sozinho, o IoT não entre no v1, e a Fonte saia do código antes dos 5 modelos.
