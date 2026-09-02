@@ -3,7 +3,43 @@
 > **Prioridade:** o que estiver neste ficheiro **vence** o dossiê sempre que houver conflito.
 > Cola aqui as notas que tens vindo a retirar. Não precisas de as reescrever: bruto e incompleto serve.
 
-Data da última actualização: _por preencher_
+Data da última actualização: 2026-09-02 (estrutura Gemini / LUMEN, ainda a validar)
+
+## 1. Visão em uma frase
+
+O seu prédio. Simples como deve ser.
+
+## 2. Para quem é (e para quem não é)
+
+- Auto-gestão pelo administrador-condómino, qualquer tamanho de prédio
+- Dual: vista admin vs vista condómino
+- (Em aberto: também vender a administradoras pequenas?)
+
+## 3. Independência de terceiros — o que é inegociável
+
+- [x] Administradora profissional no dia-a-dia — tornar opcional
+- [x] Excel como livro-razão
+- [ ] (Gemini adicionou IA como motor; a analisar — ver MIRO-lumen-vs-dev.md)
+
+## 6. Preço e modelo
+
+Proposta Gemini: 19€ / 39€ / 69€ (Essencial / Standard / Premium). Em discussão — o eixo “tamanho + IA jurídica” pode estar errado.
+
+## 7. Nome, marca, tom
+
+- Nome de trabalho: **LUMEN** (alternativa: Ninho)
+- Slogan: «O seu prédio. Simples como deve ser.»
+- Paleta Sevilha / pôr do sol (terracota, coral, creme) — branding, não arquitectura
+
+## 10. Decisões em aberto
+
+- Nome definitivo LUMEN vs Ninho
+- Preço 19/39/69 vs um só produto
+- Quanto da IA (atas, email, jurídico, orçamentos, IoT) entra no v1
+
+## 11. Recortes soltos
+
+Estrutura Gemini 2026-09-02 (7 módulos): onboarding foto/PDF <10m, QR/link mágico, 5 agentes em background, Turso 1 BD por condomínio, PWA depois nativo, roteiro 4 semanas Agosto. Análise contra a branch `dev`: `MIRO-lumen-vs-dev.md`.
 
 ## 1. Visão em uma frase
 

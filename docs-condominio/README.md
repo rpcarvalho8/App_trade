@@ -10,7 +10,7 @@ Este pacote reúne **tudo o que o código e a documentação existente permitem 
 |----------|----------|
 | [dossie-produto-e-negocio.md](./dossie-produto-e-negocio.md) | Fonte de verdade: estado actual, visão, business plan, diagramas, plano de implementação, gaps |
 | [NOTAS.md](./NOTAS.md) | As tuas notas de mercado — cola aqui o que tens vindo a retirar; o agente da **nova conversa** deve tratar este ficheiro como prioridade sobre o dossiê |
-| [PROMPT-NOVA-CONVERSA.md](./PROMPT-NOVA-CONVERSA.md) | Texto pronto a colar num **novo** agente Cursor |
+| [MIRO-lumen-vs-dev.md](./MIRO-lumen-vs-dev.md) | Análise da estrutura Gemini (LUMEN) contra a branch `dev` + cartões limpos para o Miro |
 
 ## Repositórios
 
