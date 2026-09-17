@@ -103,7 +103,18 @@ export default function AICoachPage() {
         </div>
       </div>
 
-      {err&&<div style={{ background:"#3b0f0f",border:"1px solid #7f1d1d",borderRadius:8,padding:14,color:C.red,fontSize:12 }}>⚠ {err}<div style={{ marginTop:6,fontSize:10,color:"#f87171aa" }}>Verifica <code>GEMINI_API_KEY</code> no .env.local (obtém grátis em aistudio.google.com/apikey).</div></div>}
+      {err&&(
+        <div style={{ background:"#3b0f0f",border:"1px solid #7f1d1d",borderRadius:8,padding:14,color:C.red,fontSize:12 }}>
+          ⚠ {err}
+          <div style={{ marginTop:6,fontSize:10,color:"#f87171aa" }}>
+            {/503|429|sobrecarreg/i.test(err)
+              ? "Isto é saturação temporária da Google (não a tua chave). Espera 2–5 min e clica outra vez em Gerar. Journal e Mesa continuam a funcionar."
+              : /GEMINI_API_KEY|chave/i.test(err)
+              ? <>Verifica <code>GEMINI_API_KEY</code> no .env.local (aistudio.google.com/apikey).</>
+              : "Se o erro persistir, reinicia o npm run dev depois de um git pull."}
+          </div>
+        </div>
+      )}
 
       <div style={{ display:"grid",gridTemplateColumns:"220px 1fr",gap:18,alignItems:"flex-start" }}>
         {/* Sidebar: weeks */}

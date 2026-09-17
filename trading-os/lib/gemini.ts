@@ -1,10 +1,22 @@
 import { readFile } from "fs/promises";
 import path from "path";
 
-export const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
-const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.0-flash";
+/**
+ * gemini-flash-latest is convenient but often returns 503 under free-tier load.
+ * Default to a pinned Flash model; override with GEMINI_MODEL if you prefer latest.
+ */
+export const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const FALLBACK_MODELS = (
+  process.env.GEMINI_FALLBACK_MODEL ||
+  "gemini-2.0-flash-lite,gemini-1.5-flash,gemini-flash-latest"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const MAX_ATTEMPTS = 5;
+/** Retries per model before moving to the next (503/429 clear faster by switching). */
+const ATTEMPTS_PER_MODEL = 2;
 
 export type GeminiPart =
   | { text: string }
@@ -24,8 +36,13 @@ function isRetryableStatus(status: number) {
 }
 
 function modelsToTry(): string[] {
-  const list = [PRIMARY_MODEL];
-  if (FALLBACK_MODEL && FALLBACK_MODEL !== PRIMARY_MODEL) list.push(FALLBACK_MODEL);
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const m of [PRIMARY_MODEL, ...FALLBACK_MODELS]) {
+    if (!m || seen.has(m)) continue;
+    seen.add(m);
+    list.push(m);
+  }
   return list;
 }
 
@@ -85,8 +102,8 @@ function textFromResponse(json: any): string | undefined {
 }
 
 /**
- * generateContent with retries on 429/503/5xx and an optional lighter fallback model
- * when the primary (often gemini-flash-latest) is overloaded.
+ * generateContent with short retries and a chain of fallback models when
+ * free-tier capacity returns 503/429.
  */
 export async function generateContent(opts: {
   parts: GeminiPart[];
@@ -102,33 +119,47 @@ export async function generateContent(opts: {
   const timeoutMs = opts.timeoutMs ?? 90_000;
   const label = opts.logLabel || "Gemini";
   const models = modelsToTry();
-  let lastErr = "";
+  let lastStatus = 0;
+  let lastBody = "";
 
   for (let m = 0; m < models.length; m++) {
     const model = models[m];
     if (m > 0) {
-      console.warn(`[${label}] modelo ${models[m - 1]} indisponível; a tentar ${model}…`);
+      console.warn(`[${label}] a mudar para modelo ${model}…`);
     }
     const config: GeminiGenerationConfig = { ...opts.generationConfig };
-    if (m > 0) delete config.thinkingConfig;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // thinkingConfig is only supported on some models / primary path
+    if (m > 0 || !config.thinkingConfig) delete config.thinkingConfig;
+
+    for (let attempt = 1; attempt <= ATTEMPTS_PER_MODEL; attempt++) {
       const result = await postGenerate(model, key, opts.parts, config, timeoutMs);
-      if (result.ok) return result.json;
-      lastErr = `Gemini HTTP ${result.status}: ${result.body.slice(0, 400)}`;
-      const canRetry = isRetryableStatus(result.status) && attempt < MAX_ATTEMPTS;
+      if (result.ok) {
+        if (m > 0) console.log(`[${label}] OK com ${model}`);
+        return result.json;
+      }
+      lastStatus = result.status;
+      lastBody = result.body;
+      const canRetry = isRetryableStatus(result.status) && attempt < ATTEMPTS_PER_MODEL;
       if (!canRetry) break;
-      const wait = 3000 * attempt;
+      const wait = 2000 * attempt;
       console.warn(
-        `[${label}] ${model} ${result.status}; retry ${attempt}/${MAX_ATTEMPTS - 1} em ${wait / 1000}s…`
+        `[${label}] ${model} ${result.status}; retry ${attempt}/${ATTEMPTS_PER_MODEL - 1} em ${wait / 1000}s…`
       );
       await sleep(wait);
     }
   }
 
-  throw new Error(
-    lastErr ||
-      "Gemini indisponível (503/429). A API está sobrecarregada — a app continua a funcionar; volta a gerar o relatório daqui a uns minutos."
-  );
+  if (lastStatus === 503 || lastStatus === 429) {
+    throw new Error(
+      `Gemini sobrecarregada (${lastStatus}). Não é a tua chave — a API Google está com procura elevada. Espera 2–5 min e volta a gerar. Podes mudar GEMINI_MODEL no .env.local (ex.: gemini-2.0-flash-lite).`
+    );
+  }
+  if (lastStatus === 400 || lastStatus === 401 || lastStatus === 403) {
+    throw new Error(
+      `Gemini HTTP ${lastStatus}: problema de chave ou pedido. Verifica GEMINI_API_KEY em .env.local (aistudio.google.com/apikey). ${lastBody.slice(0, 200)}`
+    );
+  }
+  throw new Error(`Gemini HTTP ${lastStatus}: ${lastBody.slice(0, 400)}`);
 }
 
 export function geminiResponseText(json: any): string {
