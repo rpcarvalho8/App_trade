@@ -77,8 +77,11 @@ export async function register() {
   }
 
   // ---------- catch-up no arranque (só com chave) ----------
+  // Em série: Coach e Brief a disparar em paralelo saturam a Gemini (503).
   if (hasKey) {
-    setTimeout(() => runWeekly("catch-up no arranque"), 4000);
-    setTimeout(() => runBrief("catch-up no arranque"), 6000);
+    setTimeout(async () => {
+      await runWeekly("catch-up no arranque");
+      await runBrief("catch-up no arranque");
+    }, 5000);
   }
 }

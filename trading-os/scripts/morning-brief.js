@@ -29,6 +29,8 @@ const path = require("path");
 const ROOT = process.cwd();
 const OUT_DIR = path.join(ROOT, "reports", "morning-brief");
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.0-flash";
+const MODELS = FALLBACK_MODEL && FALLBACK_MODEL !== MODEL ? [MODEL, FALLBACK_MODEL] : [MODEL];
 const ASSETS = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD", "SOLUSD"];
 const UA = "Mozilla/5.0 (compatible; TradingOS-MorningBrief/1.0)";
 
@@ -162,34 +164,38 @@ async function fetchYields() {
 // ---------- Gemini ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function callGemini(prompt, attempt = 1) {
+async function callGemini(prompt, attempt = 1, modelIndex = 0) {
   const MAX_ATTEMPTS = 5;
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY em falta no .env.local");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
+  const model = MODELS[modelIndex] || MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const generationConfig = {
+    temperature: 0.5,
+    maxOutputTokens: 8192,
+    thinkingConfig: modelIndex === 0 ? { thinkingBudget: 0 } : undefined,
+  };
+  if (!generationConfig.thinkingConfig) delete generationConfig.thinkingConfig;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.5,
-        maxOutputTokens: 8192,
-        // Devolvemos texto puro com delimitadores (Markdown é frágil em JSON).
-        // Desativa o "thinking" para todos os tokens irem para a resposta final.
-        thinkingConfig: { thinkingBudget: 0 },
-      },
+      generationConfig,
     }),
     signal: AbortSignal.timeout(90000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    // Retry com backoff em erros transitórios (sobrecarga / rate limit).
     if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < MAX_ATTEMPTS) {
       const wait = 3000 * attempt;
-      console.warn(`[MorningBrief] Gemini ${res.status}; retry ${attempt}/${MAX_ATTEMPTS - 1} em ${wait / 1000}s...`);
+      console.warn(`[MorningBrief] ${model} ${res.status}; retry ${attempt}/${MAX_ATTEMPTS - 1} em ${wait / 1000}s...`);
       await sleep(wait);
-      return callGemini(prompt, attempt + 1);
+      return callGemini(prompt, attempt + 1, modelIndex);
+    }
+    if ((res.status === 503 || res.status === 429 || res.status >= 500) && modelIndex + 1 < MODELS.length) {
+      console.warn(`[MorningBrief] ${model} indisponível; a tentar ${MODELS[modelIndex + 1]}…`);
+      return callGemini(prompt, 1, modelIndex + 1);
     }
     throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 400)}`);
   }
