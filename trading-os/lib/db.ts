@@ -95,6 +95,7 @@ export async function initDB() {
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       category TEXT DEFAULT 'general',
+      asset TEXT DEFAULT 'global',
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -160,13 +161,14 @@ export async function initDB() {
     await db.execute("ALTER TABLE ai_analyses ADD COLUMN week_end TEXT DEFAULT ''");
   }
 
-  // Always ensure main setups exist (upsert)
-  await seedSetups();
-
-  const cnt2 = await db.execute("SELECT COUNT(*) as c FROM principles");
-  if ((cnt2.rows[0] as any).c === 0) {
-    await seedPrinciples();
+  const prinCols = await db.execute("PRAGMA table_info(principles)");
+  const prinColNames = prinCols.rows.map((r: any) => r.name);
+  if (!prinColNames.includes("asset")) {
+    await db.execute("ALTER TABLE principles ADD COLUMN asset TEXT DEFAULT 'global'");
   }
+
+  await seedSetups();
+  await ensurePrinciples();
 }
 
 async function seedSetups() {
@@ -258,9 +260,28 @@ async function seedSetups() {
       image_refs: "[]"
     },
     {
+      name: "XAUUSD — London Structure",
+      category: "ICT",
+      description: "Playbook único de sessão para XAUUSD: bias H4 + sweep/MSS M15 + entrada M5. Janela London / London+NY. R:R mínimo 1:2. Elliott fica na revisão, não na entrada.",
+      steps: JSON.stringify([
+        "1. Calendário: nenhum high-impact US nos próximos 30 min (NFP, CPI, FOMC, Powell).",
+        "2. Bias H4 claro (não Fase B / range incerto).",
+        "3. Sweep de liquidez M15 (EQH/EQL) com fecho de volta.",
+        "4. CISD / MSS M15 na direção do bias H4.",
+        "5. Zona de entrada: OB ou FVG M5 que causou o MSS.",
+        "6. GATE R:R: até liquidez oposta H1/M15 ≥ 2.0. Senão rejeitar.",
+        "7. Risco 1% (0.5% se score mental < 5). SL além do sweep. TP1 50% em 1R → BE."
+      ]),
+      timeframes: "H4 (bias) | M15 (sweep + MSS) | M5 (entrada)",
+      markets: "XAUUSD",
+      confluence: "Bias H4 + Sweep M15 + MSS/CISD + OB/FVG M5 + R:R ≥ 2.0 + janela London/NY + sem notícia US 30m",
+      invalidation: "Vela fecha através da zona | Notícia a sair | H4 vira contra | Fase B | R:R < 2.0 | 2 losses seguidos | 2 trades no dia | DD diário ≥ 1.5%",
+      image_refs: "[]"
+    },
+    {
       name: "SMC 3-Step Scalping",
       category: "SMC",
-      description: "Estratégia de scalping de 3 passos em SOL/USDT (aplicável a qualquer ativo líquido). Combina Liquidity Sweep de 15m, Change of Character de 1m com volume institucional, e entrada em FVG de 1m confluente com a Golden Ratio de Fibonacci (0.618–0.786). R:R mínimo obrigatório de 1:3.",
+      description: "Playbook oficial de SOLUSD. Sequência obrigatória: Sweep 15m → ChoCH 1m com volume → FVG 1m na Golden Ratio. R:R ≥ 3.0. Sem pular etapas.",
       steps: JSON.stringify([
         "PASSO 1 — HTF 15m (Direção): Identificar Liquidity Sweep. Preço viola máximo ou mínimo chave de 15m mas fecha de volta para dentro (wick de desvio). Tolerância ≤ 0.2% do preço. Janela ativa: máximo 30 velas de 1m. RSI confluente valorizado.",
         "PASSO 2 — LTF 1m (Confirmação): Após o toque na zona de 15m, aguardar Change of Character (ChoCH) claro no gráfico de 1m. ChoCH Bullish = close acima do último Lower High. ChoCH Bearish = close abaixo do último Higher Low. OBRIGATÓRIO: volume da vela do ChoCH > média 20 velas × 1.5. Janela ativa: máximo 20 velas de 1m após o Passo 1.",
@@ -269,7 +290,7 @@ async function seedSetups() {
         "GESTÃO — SL Agressivo: 1 tick além do fundo/topo do FVG (apenas se FVG > 0.15%). SL Conservador: 1 tick além do extremo do impulso do ChoCH. TP Parcial (50%) no 1:2 → mover SL para Break-Even. TP Final (50%) no 1:3+ ou liquidez oposta de 15m."
       ]),
       timeframes: "15m (Direção + Liquidez) | 1m (ChoCH + FVG + Execução)",
-      markets: "SOL/USDT, BTC/USDT, ETH/USDT, Forex majors, Índices",
+      markets: "SOLUSD",
       confluence: "15m Liquidity Sweep ativo + 1m ChoCH com volume × 1.5 + FVG de 1m na Golden Ratio 0.618–0.786 + R:R disponível ≥ 3.0 + Spread < 50% do FVG",
       invalidation: "Sem Liquidity Sweep de 15m claro | ChoCH sem spike de volume | FVG fora da zona 0.618–0.786 | R:R calculado < 3.0 | ATR > 1.5% (volatilidade extrema) | Anúncio macro de alto impacto nos próximos 30m | Drawdown diário ≥ 3% | Spread > 50% do FVG",
       image_refs: JSON.stringify(["smc_liquidity_sweep", "smc_choch", "smc_fvg_golden_ratio"])
@@ -277,43 +298,70 @@ async function seedSetups() {
   ];
 
   for (const s of setups) {
-    // INSERT OR REPLACE forces upsert: updates existing rows (matched by UNIQUE name) and inserts new ones.
-    // This ensures seeds are always in sync with code without touching trades or other tables.
+    // Não sobrescrever setups que o utilizador já editou — só inserir se o nome ainda não existir.
     await db.execute({
       sql: `INSERT INTO setups (name,category,description,steps,timeframes,markets,confluence,invalidation,image_refs)
             VALUES (?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(name) DO UPDATE SET
-              category=excluded.category,
-              description=excluded.description,
-              steps=excluded.steps,
-              timeframes=excluded.timeframes,
-              markets=excluded.markets,
-              confluence=excluded.confluence,
-              invalidation=excluded.invalidation,
-              image_refs=excluded.image_refs`,
+            ON CONFLICT(name) DO NOTHING`,
       args: [s.name,s.category,s.description,s.steps,s.timeframes,s.markets,s.confluence,s.invalidation,s.image_refs],
     });
   }
+
+  // Migração pontual: SMC antigo falava em SOL/USDT; o playbook oficial é SOLUSD.
+  await db.execute({
+    sql: `UPDATE setups SET markets = 'SOLUSD' WHERE name = 'SMC 3-Step Scalping' AND (markets LIKE '%SOL/USDT%' OR markets = '')`,
+  });
 }
 
+const PRINCIPLE_SEED: Array<[string, string, string, string]> = [
+  ["Só trades com setup catalogado","Nunca entrar sem o playbook do ativo (XAUUSD London Structure ou SOLUSD SMC 3-Step). O resto é estudo.","discipline","global"],
+  ["Pausa após 2 losses consecutivos","30 minutos de pausa obrigatória após 2 perdas — em qualquer ativo.","risk","global"],
+  ["Risk máximo 1% por trade","Nunca arriscar mais de 1%. Score mental <5: máximo 0.5%.","risk","global"],
+  ["Sem trading com sono <6h ou stress >7","Condições de não-trading.","psychology","global"],
+  ["Estado mental D = sem trading","Fechar plataforma, sem exceções.","psychology","global"],
+  ["Sem trading antes de High Impact News","Fechar posições 30min antes de NFP, CPI, FOMC. Crítico em XAUUSD.","risk","global"],
+  ["Journal obrigatório em cada trade","Registo completo depois da execução — não durante o setup.","discipline","global"],
+  ["Revisão semanal todo domingo","Journal semanal, ajustar metas.","discipline","global"],
+  ["Elliott + Wyckoff na revisão, não na entrada","Contagem e fases ficam no journal/domingo. Na sessão só gates SIM/NÃO.","strategy","global"],
+  ["Chock obrigatório para entrar","Sem Spring/UTAD nos M5/M2: sem entrada. Aplica-se a setups Wyckoff, não ao SMC 3-Step.","strategy","XAUUSD"],
+  ["XAUUSD: máximo 2 trades por dia","Após 2 trades em ouro, encerrar a sessão desse ativo.","discipline","XAUUSD"],
+  ["XAUUSD: R:R mínimo 1:2","Até à liquidez oposta H1/M15. Abaixo de 2.0: rejeitar. Não forçar 3R em ouro.","risk","XAUUSD"],
+  ["XAUUSD: drawdown diário máx 1.5%","Parar XAUUSD ao atingir 1.5% de DD no dia.","risk","XAUUSD"],
+  ["XAUUSD: só London / London+NY","Fora da janela: observação. Sem execução.","discipline","XAUUSD"],
+  ["Máximo 3 trades por dia","Após 3 trades em SOLUSD (SMC 3-Step), encerrar a sessão desse ativo.","discipline","SOLUSD"],
+  ["SMC 3-Step: R:R mínimo 1:3 obrigatório","Nunca entrar se o R:R até à liquidez oposta de 15m for inferior a 3.0. Sem exceções.","risk","SOLUSD"],
+  ["SMC 3-Step: 3 passos obrigatoriamente sequenciais","O Passo 2 (ChoCH) só é válido após o Passo 1 (Sweep). O Passo 3 (FVG) só é válido após o Passo 2. Nunca pular etapas.","strategy","SOLUSD"],
+  ["SMC 3-Step: drawdown diário máx 3%","Parar SOLUSD ao atingir 3% de drawdown no dia.","risk","SOLUSD"],
+];
+
 async function seedPrinciples() {
-  const principles = [
-    ["Só trades com setup catalogado","Nunca entrar sem um dos setups definidos.","discipline"],
-    ["Pausa após 2 losses consecutivos","30 minutos de pausa obrigatória após 2 perdas.","risk"],
-    ["Risk máximo 1% por trade","Nunca arriscar mais de 1%. Score mental <5: máximo 0.5%.","risk"],
-    ["Sem trading com sono <6h ou stress >7","Condições de não-trading.","psychology"],
-    ["Estado mental D = sem trading","Fechar plataforma, sem exceções.","psychology"],
-    ["Chock obrigatório para entrar","Sem Spring/UTAD nos M5/M2: sem entrada.","strategy"],
-    ["Elliott + Wyckoff devem alinhar","Os dois sistemas na mesma direção na macro.","strategy"],
-    ["Máximo 3 trades por dia","Após 3 trades, encerrar sessão.","discipline"],
-    ["Sem trading antes de High Impact News","Fechar posições 30min antes de NFP, CPI, FOMC.","risk"],
-    ["Journal obrigatório em cada trade","Registo técnico + mental completo.","discipline"],
-    ["Revisão semanal todo domingo","Journal semanal, ajustar metas.","discipline"],
-    ["SMC 3-Step: R:R mínimo 1:3 obrigatório","No setup SMC 3-Step, nunca entrar se o R:R calculado até à liquidez oposta de 15m for inferior a 3.0. Sem exceções.","risk"],
-    ["SMC 3-Step: 3 passos obrigatoriamente sequenciais","O Passo 2 (ChoCH) só é válido após o Passo 1 (Sweep). O Passo 3 (FVG) só é válido após o Passo 2. Nunca pular etapas.","strategy"],
-    ["SMC 3-Step: drawdown diário máx 3%","No trading SMC scalping, parar toda a atividade ao atingir 3% de drawdown no dia.","risk"],
-  ];
-  for (const p of principles) {
-    await db.execute({ sql:`INSERT INTO principles (title,body,category) VALUES (?,?,?)`, args:p });
+  for (const p of PRINCIPLE_SEED) {
+    await db.execute({ sql:`INSERT INTO principles (title,body,category,asset) VALUES (?,?,?,?)`, args:p });
+  }
+}
+
+async function ensurePrinciples() {
+  const cnt = await db.execute("SELECT COUNT(*) as c FROM principles");
+  if ((cnt.rows[0] as any).c === 0) {
+    await seedPrinciples();
+    return;
+  }
+
+  for (const p of PRINCIPLE_SEED) {
+    const existing = await db.execute({ sql: "SELECT id FROM principles WHERE title=?", args: [p[0]] });
+    if (existing.rows.length === 0) {
+      await db.execute({ sql:`INSERT INTO principles (title,body,category,asset) VALUES (?,?,?,?)`, args:p });
+    }
+  }
+
+  const assetByTitle: Record<string, string> = {
+    "Chock obrigatório para entrar": "XAUUSD",
+    "SMC 3-Step: R:R mínimo 1:3 obrigatório": "SOLUSD",
+    "SMC 3-Step: 3 passos obrigatoriamente sequenciais": "SOLUSD",
+    "SMC 3-Step: drawdown diário máx 3%": "SOLUSD",
+    "Máximo 3 trades por dia": "SOLUSD",
+  };
+  for (const [title, asset] of Object.entries(assetByTitle)) {
+    await db.execute({ sql: "UPDATE principles SET asset=? WHERE title=? AND (asset IS NULL OR asset='' OR asset='global')", args: [asset, title] });
   }
 }

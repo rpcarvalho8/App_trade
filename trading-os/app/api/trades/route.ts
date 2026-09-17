@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { initDB, db } from "@/lib/db";
+import { canonicalizePair } from "@/lib/pairs";
+
+const TRADE_FIELDS = ["date","pair","direction","setup","session","entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","outcome","elliott_wave","wyckoff_phase","wyckoff_event","imbalance_zone","htf_bias","confluences","entry_reason","shock_type","shock_timeframe","management","lesson","notes","screenshot_before","screenshot_after","screenshot_entry","tags","mental_state","followed_plan","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level","emotional_state","pre_session_notes","post_trade_emotion"] as const;
+const TRADE_FIELD_SET = new Set<string>(TRADE_FIELDS);
+const NUM_FIELDS = new Set(["entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level"]);
 
 export async function GET(req: NextRequest) {
   await initDB();
@@ -25,34 +30,39 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  await initDB();
-  const b = await req.json();
-  const fields = ["date","pair","direction","setup","session","entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","outcome","elliott_wave","wyckoff_phase","wyckoff_event","imbalance_zone","htf_bias","confluences","entry_reason","shock_type","shock_timeframe","management","lesson","notes","screenshot_before","screenshot_after","screenshot_entry","tags","mental_state","followed_plan","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level","emotional_state","pre_session_notes","post_trade_emotion"];
-  const numFields = new Set(["entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level"]);
-  const vals = fields.map(f => {
-    const v = b[f];
-    if (f === "followed_plan") return v === undefined ? 1 : Number(v);
-    if (numFields.has(f)) return v !== undefined && v !== "" ? Number(v) : null;
-    return v ?? "";
-  });
-  const result = await db.execute({
-    sql: `INSERT INTO trades (${fields.join(",")}) VALUES (${fields.map(()=>"?").join(",")})`,
-    args: vals,
-  });
-  return NextResponse.json({ id: Number(result.lastInsertRowid) });
+  try {
+    await initDB();
+    const b = await req.json();
+    if (b.pair) b.pair = canonicalizePair(b.pair) || b.pair;
+    const vals = TRADE_FIELDS.map(f => {
+      const v = b[f];
+      if (f === "followed_plan") return v === undefined ? 1 : Number(v);
+      if (NUM_FIELDS.has(f)) return v !== undefined && v !== "" ? Number(v) : null;
+      return v ?? "";
+    });
+    const result = await db.execute({
+      sql: `INSERT INTO trades (${TRADE_FIELDS.join(",")}) VALUES (${TRADE_FIELDS.map(()=>"?").join(",")})`,
+      args: vals,
+    });
+    return NextResponse.json({ id: Number(result.lastInsertRowid) });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Erro ao guardar trade" }, { status: 500 });
+  }
 }
 
 export async function PUT(req: NextRequest) {
   await initDB();
   const b = await req.json();
   const { id, ...rest } = b;
-  const numFields = new Set(["entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level"]);
-  const keys = Object.keys(rest);
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  if (rest.pair) rest.pair = canonicalizePair(rest.pair) || rest.pair;
+  const keys = Object.keys(rest).filter((k) => TRADE_FIELD_SET.has(k));
+  if (!keys.length) return NextResponse.json({ error: "No valid fields" }, { status: 400 });
   const sets = keys.map(k => `${k}=?`).join(",");
   const vals = keys.map(k => {
     const v = rest[k];
     if (k === "followed_plan") return Number(v);
-    if (numFields.has(k)) return v !== "" && v !== null && v !== undefined ? Number(v) : null;
+    if (NUM_FIELDS.has(k)) return v !== "" && v !== null && v !== undefined ? Number(v) : null;
     return v ?? "";
   });
   await db.execute({ sql:`UPDATE trades SET ${sets} WHERE id=?`, args:[...vals, id] });

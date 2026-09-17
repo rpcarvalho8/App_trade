@@ -35,6 +35,11 @@ function num(v: any, d = 0): number {
   return Number.isFinite(n) ? n : d;
 }
 
+function isOverloadError(e: any): boolean {
+  const msg = String(e?.message || e || "");
+  return /503|429|sobrecarreg/i.test(msg);
+}
+
 export interface WeeklyResult {
   week_start: string;
   week_end: string;
@@ -43,19 +48,27 @@ export interface WeeklyResult {
   images_sent: number;
 }
 
+export type GenerateWeeklyOptions = {
+  /** Cap on screenshots (0 = text-only). Defaults to MAX_IMAGES. */
+  maxImages?: number;
+};
+
 /**
  * Generates the weekly AI Coach report for the given week (defaults to the
  * previous full week) and stores it in ai_analyses. Uses Gemini with vision:
  * every trade's screenshots (before/entry/after) are sent for chart analysis.
+ * On Gemini 503/429 with images, retries once text-only (lighter payload).
  */
 export async function generateWeeklyReport(
   weekStart?: string,
-  weekEnd?: string
+  weekEnd?: string,
+  opts: GenerateWeeklyOptions = {}
 ): Promise<WeeklyResult> {
   await initDB();
 
   const range = weekStart && weekEnd ? { week_start: weekStart, week_end: weekEnd } : previousWeekRange();
   const { week_start, week_end } = range;
+  const imageCap = opts.maxImages ?? MAX_IMAGES;
 
   // Trades in the week (dates are stored as YYYY-MM-DD or ISO; compare on date prefix).
   const tradesRes = await db.execute({
@@ -96,38 +109,38 @@ export async function generateWeeklyReport(
     avg_confidence: Math.round(avg("confidence_level") * 10) / 10,
   };
 
-  // Build a compact per-trade text block (exclude base64/screenshot url noise).
   const tradeSummaries = trades.map((t) => {
     const { screenshot_before, screenshot_entry, screenshot_after, created_at, ...rest } = t;
     return rest;
   });
 
-  // Build multimodal parts: intro text, then for each trade its data + its screenshots.
   const parts: GeminiPart[] = [];
   let imagesSent = 0;
 
+  const visionNote =
+    imageCap <= 0
+      ? "Nesta execução NÃO recebes screenshots (modo texto — a API estava saturada ou o catch-up pediu leve). Analisa só números e notas; deixa screenshot_analysis vazio ou genérico."
+      : "Recebes também SCREENSHOTS dos gráficos (antes/entrada/depois) e DEVES analisá-los visualmente.";
+
   const intro = `És um coach de trading de elite (Wyckoff, Elliott Wave, ICT/SMC e psicologia de trading).
 Vais analisar a SEMANA de ${week_start} a ${week_end} de um trader.
-Recebes: (1) estatísticas agregadas, (2) os dados completos de cada trade — técnicos E psicológicos (sono, stress, ansiedade, foco, confiança, se seguiu o plano, notas, lições, estado emocional), e (3) os SCREENSHOTS dos gráficos de cada trade (antes/entrada/depois), que DEVES analisar visualmente.
-
-Ao analisar os screenshots, comenta o que vês: estrutura de mercado, qualidade da zona de entrada, respeito pelo setup, colocação de stop, gestão, e se a leitura técnica bate certo com o que o trader escreveu.
+Recebes: (1) estatísticas agregadas, (2) os dados completos de cada trade — técnicos E psicológicos (sono, stress, ansiedade, foco, confiança, se seguiu o plano, notas, lições, estado emocional). ${visionNote}
 
 Liga SEMPRE o estado psicológico ao desempenho técnico. Sê específico e usa os números reais.
 
 ESTATÍSTICAS DA SEMANA: ${JSON.stringify(stats)}
 LOGS MENTAIS DA SEMANA: ${JSON.stringify(mentalLogs.map((m) => { const { created_at, ...r } = m; return r; }))}
 
-A seguir vêm os trades da semana, um a um, cada um com os seus screenshots.`;
+A seguir vêm os trades da semana, um a um.`;
   parts.push({ text: intro });
 
   for (const t of tradeSummaries) {
     parts.push({
       text: `\n=== TRADE #${t.id} | ${t.date} | ${t.pair} ${t.direction} | setup: ${t.setup} | resultado: ${t.outcome} | pnl: ${t.pnl} ===\nDADOS: ${JSON.stringify(t)}`,
     });
+    if (imageCap <= 0) continue;
     for (const field of ["screenshot_before", "screenshot_entry", "screenshot_after"]) {
-      const url = (t as any)[field];
-      if (!url || imagesSent >= MAX_IMAGES) continue;
-      // NOTE: url stripped above, re-read from original trade row
+      if (imagesSent >= imageCap) continue;
       const orig = trades.find((x) => x.id === t.id);
       const realUrl = orig ? orig[field] : "";
       if (!realUrl) continue;
@@ -158,11 +171,11 @@ A seguir vêm os trades da semana, um a um, cada um com os seus screenshots.`;
   "technical_insights": {
     "best_setup": "<melhor setup da semana e porquê, com dados>",
     "worst_setup": "<pior setup e porquê>",
-    "entry_quality": "<qualidade das entradas com base nos screenshots>",
+    "entry_quality": "<qualidade das entradas com base nos screenshots ou nos dados se não houver imagens>",
     "setup_psychology_link": "<como o estado mental afetou a execução>"
   },
   "screenshot_analysis": [
-    {"trade_ref": "<#id e par>", "observation": "<o que observaste no(s) gráfico(s): estrutura, zona, stop, gestão, alinhamento com o plano>"}
+    {"trade_ref": "<#id e par>", "observation": "<o que observaste no(s) gráfico(s), ou 'sem screenshot nesta geração'>"}
   ],
   "strengths": [{"title": "<título>", "detail": "<detalhe com dados>"}],
   "weaknesses": [{"title": "<título>", "detail": "<detalhe>", "severity": "high|medium|low"}],
@@ -171,13 +184,11 @@ A seguir vêm os trades da semana, um a um, cada um com os seus screenshots.`;
   "dont_next_week": ["<o que NÃO fazer na próxima semana — erros a evitar>"],
   "study_plan": [{"priority": 1, "topic": "<tópico>", "reason": "<porquê>", "resource": "<como estudar>"}],
   "next_week_focus": "<foco principal da próxima semana>"
-}
-Inclui uma entrada em "screenshot_analysis" por cada trade relevante que tenha screenshot.`;
+}`;
   parts.push({ text: schema });
 
   let analysis: any;
   if (closed.length === 0 && trades.length === 0) {
-    // No trades this week — produce a minimal, honest report without calling the model.
     analysis = {
       overall_score: 0,
       technical_score: 0,
@@ -202,16 +213,31 @@ Inclui uma entrada em "screenshot_analysis" por cada trade relevante que tenha s
       next_week_focus: "",
     };
   } else {
-    analysis = await callGeminiJSON(parts);
+    try {
+      analysis = await callGeminiJSON(parts);
+    } catch (e) {
+      // Vision payloads are large and hit free-tier 503 more than Morning Brief text.
+      if (imageCap > 0 && isOverloadError(e)) {
+        console.warn(
+          "[AI Coach] Gemini saturada com screenshots; a tentar relatório só-texto (mais leve)…"
+        );
+        return generateWeeklyReport(week_start, week_end, { maxImages: 0 });
+      }
+      throw e;
+    }
   }
 
-  // Attach computed week meta + stats so the UI never has to trust the model for numbers.
   analysis.week_start = week_start;
   analysis.week_end = week_end;
   analysis.week_stats = stats;
   analysis.generated_at = new Date().toISOString();
+  if (imagesSent === 0 && (closed.length > 0 || trades.length > 0)) {
+    analysis.vision_mode = "text_only";
+    analysis.summary = (analysis.summary || "") + " (gerado sem análise visual dos gráficos — Gemini saturada ou modo leve.)";
+  } else {
+    analysis.vision_mode = "with_screenshots";
+  }
 
-  // Upsert: one report per week_start. Remove any previous report for this week.
   await db.execute({
     sql: "DELETE FROM ai_analyses WHERE period='weekly' AND week_start=?",
     args: [week_start],
@@ -225,7 +251,9 @@ Inclui uma entrada em "screenshot_analysis" por cada trade relevante que tenha s
 }
 
 /** Ensures the previous full week has a report; generates it if missing. Used by the scheduler/catch-up. */
-export async function ensurePreviousWeekReport(now = new Date()): Promise<{ generated: boolean; week_start: string }> {
+export async function ensurePreviousWeekReport(
+  now = new Date()
+): Promise<{ generated: boolean; week_start: string; deferred?: boolean; reason?: string }> {
   await initDB();
   const { week_start } = previousWeekRange(now);
   const existing = await db.execute({
@@ -233,6 +261,19 @@ export async function ensurePreviousWeekReport(now = new Date()): Promise<{ gene
     args: [week_start],
   });
   if (existing.rows.length > 0) return { generated: false, week_start };
-  await generateWeeklyReport();
-  return { generated: true, week_start };
+  try {
+    // Catch-up: text-first to avoid competing with Morning Brief and free-tier vision limits.
+    await generateWeeklyReport(undefined, undefined, { maxImages: 0 });
+    return { generated: true, week_start };
+  } catch (e: any) {
+    if (isOverloadError(e)) {
+      return {
+        generated: false,
+        week_start,
+        deferred: true,
+        reason: "Gemini saturada — gera mais tarde em /ai-coach",
+      };
+    }
+    throw e;
+  }
 }

@@ -6,6 +6,13 @@ const C = {
   muted: "#475569", secondary: "#94a3b8", border: "#1e2d45", card: "#0d1929", elevated: "#111827",
 };
 
+const ASSETS = [
+  { value: "", label: "Todos" },
+  { value: "global", label: "Globais" },
+  { value: "XAUUSD", label: "XAUUSD" },
+  { value: "SOLUSD", label: "SOLUSD" },
+];
+
 const CATEGORIES = [
   { value: "discipline", label: "Disciplina", color: C.accent, icon: "◈" },
   { value: "risk", label: "Gestão de Risco", color: C.amber, icon: "◆" },
@@ -17,10 +24,17 @@ const CATEGORIES = [
 export default function PrinciplesPage() {
   const [principles, setPrinciples] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ title: "", body: "", category: "discipline" });
+  const [form, setForm] = useState({ title: "", body: "", category: "discipline", asset: "global" });
   const [filter, setFilter] = useState("");
+  const [assetFilter, setAssetFilter] = useState("");
+  const [loadErr, setLoadErr] = useState("");
 
-  const fetchAll = () => { fetch("/api/principles").then(r => r.json()).then(setPrinciples); };
+  const fetchAll = () => {
+    fetch("/api/principles")
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then(d => { setPrinciples(d); setLoadErr(""); })
+      .catch(e => setLoadErr(String(e?.message || e)));
+  };
   useEffect(fetchAll, []);
 
   const save = async () => {
@@ -30,7 +44,7 @@ export default function PrinciplesPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(form),
     });
-    setForm({ title: "", body: "", category: "discipline" });
+    setForm({ title: "", body: "", category: "discipline", asset: "global" });
     setShowForm(false);
     fetchAll();
   };
@@ -44,6 +58,7 @@ export default function PrinciplesPage() {
   const grouped = CATEGORIES.reduce((acc, cat) => {
     acc[cat.value] = principles.filter(p =>
       p.category === cat.value &&
+      (!assetFilter || (p.asset || "global") === assetFilter) &&
       (!filter || p.title.toLowerCase().includes(filter.toLowerCase()) || p.body.toLowerCase().includes(filter.toLowerCase()))
     );
     return acc;
@@ -55,7 +70,7 @@ export default function PrinciplesPage() {
         <div>
           <div style={{ fontSize: 9, color: C.muted, letterSpacing: 2 }}>TRADING OS</div>
           <div style={{ fontSize: 22, fontWeight: 600, color: C.accent }}>Princípios de Trading</div>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>As tuas regras de ouro — revê antes de cada sessão</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Regras globais vs por ativo — na sessão só valem as do ativo escolhido</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <input value={filter} onChange={e => setFilter(e.target.value)}
@@ -66,10 +81,27 @@ export default function PrinciplesPage() {
         </div>
       </div>
 
+      {loadErr && (
+        <div style={{ background: "#3b1a1a", border: `1px solid ${C.red}55`, color: "#fca5a5", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+          Falha a carregar princípios: {loadErr}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 6 }}>
+        {ASSETS.map(a => (
+          <button key={a.value} onClick={() => setAssetFilter(a.value)} style={{
+            padding: "5px 12px", borderRadius: 14, fontSize: 11, cursor: "pointer",
+            border: `1px solid ${assetFilter === a.value ? C.accent : C.border}`,
+            background: assetFilter === a.value ? "#0f4c3a" : C.card,
+            color: assetFilter === a.value ? C.accent : C.secondary,
+          }}>{a.label}</button>
+        ))}
+      </div>
+
       {showForm && (
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20 }}>
           <div style={{ fontSize: 9, color: C.muted, letterSpacing: 2, marginBottom: 14 }}>NOVO PRINCÍPIO</div>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
             <div>
               <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 4 }}>TÍTULO</div>
               <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
@@ -79,6 +111,14 @@ export default function PrinciplesPage() {
               <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 4 }}>CATEGORIA</div>
               <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={{ width: "100%" }}>
                 {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 4 }}>ATIVO</div>
+              <select value={form.asset} onChange={e => setForm(f => ({ ...f, asset: e.target.value }))} style={{ width: "100%" }}>
+                <option value="global">Global</option>
+                <option value="XAUUSD">XAUUSD</option>
+                <option value="SOLUSD">SOLUSD</option>
               </select>
             </div>
           </div>
@@ -97,7 +137,7 @@ export default function PrinciplesPage() {
 
       {CATEGORIES.map(cat => {
         const items = grouped[cat.value] || [];
-        if (items.length === 0 && filter) return null;
+        if (items.length === 0 && (filter || assetFilter)) return null;
         return (
           <div key={cat.value}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -124,6 +164,9 @@ export default function PrinciplesPage() {
                   }}>✕</button>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 8, paddingRight: 20 }}>
                     {p.title}
+                  </div>
+                  <div style={{ fontSize: 9, color: (p.asset === "XAUUSD" ? C.amber : p.asset === "SOLUSD" ? "#c084fc" : C.muted), marginBottom: 6, letterSpacing: 1 }}>
+                    {(p.asset || "global").toUpperCase()}
                   </div>
                   <div style={{ fontSize: 12, color: C.secondary, lineHeight: 1.7 }}>{p.body}</div>
                 </div>

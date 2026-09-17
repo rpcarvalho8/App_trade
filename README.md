@@ -1,28 +1,30 @@
 # ⚡ Trading Operating System (TOS)
 
-Sistema profissional de gestão de trading — Journal + AI Coach + Analytics.  
-Corre 100% local no teu PC. Sem cloud, sem subscrições.
+Sistema local de journal, Mesa de Operação, AI Coach e analytics.  
+Corre no teu PC (Next.js + SQLite). Sem execução automática no broker.
 
 ---
 
-## 🚀 Instalação Rápida
+## 🚀 Instalação
 
 ```bash
-# 1. Extrai o projeto
-tar -xzf trading-os.tar.gz
 cd trading-os
-
-# 2. Instala dependências
 npm install
 
-# 3. Configura a API key do Claude (para o AI Coach)
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env.local
+# AI Coach + Morning Brief (Google Gemini)
+echo "GEMINI_API_KEY=..." > .env.local
 
-# 4. Arranca o servidor
 npm run dev
-
-# 5. Abre no browser
 # http://localhost:3000
+```
+
+Opcional em `.env.local`:
+
+```
+GEMINI_MODEL=gemini-flash-latest
+RESET_TOKEN=escolhe-um-segredo   # obrigatório para POST /api/reset
+ALERT_THRESHOLD_GOLD=0.15
+ALERT_THRESHOLD_SOL=0.8
 ```
 
 ---
@@ -31,80 +33,72 @@ npm run dev
 
 | Página | URL | Descrição |
 |--------|-----|-----------|
-| Overview | `/` | Dashboard geral com métricas, equity curve e últimos trades |
-| Journal | `/journal` | Registo de trades com formulário completo |
-| Performance | `/performance` | Analytics avançado: equity, drawdown, setup analysis |
-| Setups | `/setups` | Biblioteca de setups com regras e performance |
-| AI Coach | `/ai-coach` | Análise AI dos teus padrões e plano de estudo |
-| Princípios | `/principles` | As tuas regras de ouro organizadas por categoria |
+| Overview | `/` | Dashboard: P&L, equity, por setup / par / sessão |
+| **Sessão** | `/sessao` | Mesa de Operação XAUUSD / SOLUSD — checklist sequencial |
+| Morning Brief | `/morning-brief` | Resumo macro diário (Gemini + APIs gratuitas) |
+| Journal | `/journal` | Registo de trades (pré-preenchido a partir da sessão) |
+| Journal Semanal | `/weekly-journal` | Revisão semanal manual |
+| Performance | `/performance` | Analytics: equity, drawdown, por ativo e setup |
+| Setups | `/setups` | Biblioteca de estudo (Wyckoff / Elliott / ICT / SMC) |
+| AI Coach | `/ai-coach` | Relatório semanal Gemini (com screenshots) |
+| Princípios | `/principles` | Regras globais e por ativo (XAUUSD / SOLUSD) |
+| Exchanges | `/exchanges` | Importação read-only Bybit / Binance / Kraken |
 
 ---
 
-## 🤖 AI Coach
+## 🎯 Mesa de Operação
 
-O AI Coach usa o Claude (claude-opus-4) para:
-- Detectar padrões comportamentais (FOMO, revenge, etc.)
-- Identificar pontos fortes e fracos com dados concretos
-- Gerar plano de estudo personalizado
-- Sugerir o que evitar e em que focar
+Um ativo, um playbook, gates SIM/NÃO:
 
-**Necessário:** API Key da Anthropic em `.env.local`
-```
-ANTHROPIC_API_KEY=sk-ant-api03-...
-```
-Obtém em: https://console.anthropic.com
+- **XAUUSD — London Structure** — bias H4, sweep/MSS M15, entrada M5, R:R ≥ 2.0, máx. 2 trades, DD 1.5%
+- **SOLUSD — SMC 3-Step** — sweep 15m → ChoCH 1m → FVG Golden Ratio, R:R ≥ 3.0, máx. 3 trades, DD 3%
+
+Fluxo: marcar passos → calculadora R:R/size → **AUTORIZADO / ESPERAR / REJEITAR** → journal pré-preenchido.
+
+---
+
+## 🤖 AI Coach & Morning Brief
+
+Usam **Google Gemini** (`GEMINI_API_KEY`), não Anthropic.
+
+- Morning Brief: cron 06:00 Europe/Lisbon + catch-up ao abrir a página
+- AI Coach: domingo 09:00 + geração manual
 
 ---
 
 ## 🗄️ Base de Dados
 
-SQLite local — ficheiro `trading.db` na raiz do projeto.  
-Dados de exemplo são inseridos automaticamente na primeira execução.
+SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**.
 
 **Backup:**
+
 ```bash
-cp trading.db trading_backup_$(date +%Y%m%d).db
+cd trading-os
+npm run db:backup
 ```
 
----
-
-## 🔧 Stack Técnica
-
-- **Next.js 14** — App Router, Server Components
-- **LibSQL** — SQLite local (sem instalação adicional)
-- **Recharts** — Gráficos interativos
-- **Anthropic SDK** — AI Coach
+`POST /api/reset` apaga trades/logs/análises **apenas** se `RESET_TOKEN` estiver definido e for enviado (`x-reset-token` ou `{ "token": "..." }`).
 
 ---
 
-## 📈 Roadmap (próximas versões)
+## 🔧 Stack
 
-- [ ] Ligação Binance/Bybit API — importar trades automaticamente
-- [ ] Módulo Prop Firms (FTMO, MFF, The5ers)
-- [ ] Screenshot upload e anotação de charts
+- **Next.js 16** — App Router
+- **React 19**
+- **LibSQL** — SQLite local
+- **Recharts** — gráficos
+- **Gemini API** — brief e coach
+- **WebSocket** — alertas de preço / calendário (porta 3001)
+
+---
+
+## 📈 Roadmap
+
+- [x] Ligação Binance/Bybit/Kraken — import read-only
+- [x] Screenshot upload
+- [x] Alertas in-app (preço + calendário)
+- [x] Mesa de Operação XAUUSD / SOLUSD
+- [ ] Módulo Prop Firms
 - [ ] Export PDF de relatório mensal
-- [ ] Alertas (email/Telegram) para violações de regras
+- [ ] Alertas email/Telegram
 - [ ] Backtesting de setups
-
----
-
-## 📂 Estrutura
-
-```
-trading-os/
-├── app/
-│   ├── page.tsx              # Overview
-│   ├── journal/page.tsx      # Journal de trades
-│   ├── performance/page.tsx  # Analytics
-│   ├── setups/page.tsx       # Setups library
-│   ├── ai-coach/page.tsx     # AI Coach
-│   ├── principles/page.tsx   # Princípios
-│   └── api/                  # APIs REST
-│       ├── trades/
-│       ├── stats/
-│       ├── setups/
-│       ├── principles/
-│       └── ai-analysis/
-└── lib/
-    └── db.ts                 # Base de dados SQLite
-```

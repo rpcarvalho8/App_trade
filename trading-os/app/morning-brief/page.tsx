@@ -71,7 +71,9 @@ export default function MorningBriefPage() {
         <div style={{ background: "#2a1215", border: "1px solid #7f1d1d", color: "#fca5a5", padding: 14, borderRadius: 6, fontSize: 12 }}>
           <strong>Erro:</strong> {error}
           <div style={{ color: "#94a3b8", marginTop: 6 }}>
-            Verifica se o <code>GEMINI_API_KEY</code> está definido em <code>.env.local</code>. A Gemini pode estar temporariamente sobrecarregada — tenta recarregar.
+            {/503|429|sobrecarreg|indispon/i.test(error)
+              ? "A Google Gemini está saturada (não é a chave). Espera uns minutos e recarrega esta página."
+              : <>Verifica <code>GEMINI_API_KEY</code> em <code>.env.local</code> se o erro falar em chave em falta.</>}
           </div>
         </div>
       )}

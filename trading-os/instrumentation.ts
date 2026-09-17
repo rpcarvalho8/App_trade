@@ -22,9 +22,13 @@ export async function register() {
     try {
       const { ensurePreviousWeekReport } = await import("@/lib/weekly-analysis");
       const res = await ensurePreviousWeekReport();
-      console.log(
-        `[AI Coach] ${label}: ${res.generated ? "relatório gerado" : "já existia"} para a semana ${res.week_start}`
-      );
+      if (res.deferred) {
+        console.warn(`[AI Coach] ${label}: adiado (${res.reason}). Semana ${res.week_start}.`);
+      } else {
+        console.log(
+          `[AI Coach] ${label}: ${res.generated ? "relatório gerado (modo texto no catch-up)" : "já existia"} para a semana ${res.week_start}`
+        );
+      }
     } catch (e: any) {
       console.error(`[AI Coach] ${label} falhou:`, e?.message || e);
     }
@@ -77,8 +81,11 @@ export async function register() {
   }
 
   // ---------- catch-up no arranque (só com chave) ----------
+  // Em série: Coach e Brief a disparar em paralelo saturam a Gemini (503).
   if (hasKey) {
-    setTimeout(() => runWeekly("catch-up no arranque"), 4000);
-    setTimeout(() => runBrief("catch-up no arranque"), 6000);
+    setTimeout(async () => {
+      await runWeekly("catch-up no arranque");
+      await runBrief("catch-up no arranque");
+    }, 5000);
   }
 }
