@@ -19,10 +19,12 @@ type AssetStatus = {
   mode?: string;
   label?: string;
   message?: string;
+  disclaimer?: string;
   ready?: boolean;
   bars?: Record<string, number>;
   cacheBars?: Record<string, number>;
   lastError?: string;
+  pollPlan?: string;
 };
 
 export default function SignalsPage() {
@@ -159,7 +161,10 @@ function AssetCard({
         <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>{title}</div>
         {beta && (
           <span
-            title="Dados / calibração ainda em observação — não uses para confiança plena na entrada"
+            title={
+              asset.disclaimer ||
+              "Cotação de agregador de mercado (Twelve Data), não da corretora — possível divergência de spread"
+            }
             style={{
               fontSize: 10,
               fontWeight: 600,
@@ -175,6 +180,23 @@ function AssetCard({
           </span>
         )}
       </div>
+      {beta && (
+        <div
+          style={{
+            fontSize: 10,
+            color: C.amber,
+            background: "#1a1508",
+            border: `1px solid ${C.amber}33`,
+            borderRadius: 6,
+            padding: "8px 10px",
+            marginBottom: 10,
+            lineHeight: 1.5,
+          }}
+        >
+          {asset.disclaimer ||
+            "O preço/OHLC vem do agregador Twelve Data (XAU/USD), não diretamente da corretora XTB. Pode haver divergência de spread face ao xStation — a entrada continua manual."}
+        </div>
+      )}
       <div style={{ fontSize: 11, color: C.secondary, lineHeight: 1.6 }}>
         <div>
           Estado: <span style={{ color: stColor }}>{st}</span>
@@ -182,6 +204,9 @@ function AssetCard({
         </div>
         <div>Fonte: {asset.source || "—"}</div>
         {asset.message && <div style={{ color: C.muted, marginTop: 4 }}>{asset.message}</div>}
+        {asset.pollPlan && (
+          <div style={{ color: C.muted, marginTop: 4, fontSize: 10 }}>Poll: {asset.pollPlan}</div>
+        )}
         {asset.lastError && (
           <div style={{ color: C.red, marginTop: 6, fontSize: 10 }}>{asset.lastError}</div>
         )}

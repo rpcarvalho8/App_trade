@@ -203,7 +203,7 @@ export function startSignalRunner(): void {
   });
 
   console.log(
-    "[signal-runner] motor ligado — XAU OHLC real (xAPI/TwelveData) + SOL Kraken. Só alertas."
+    "[signal-runner] motor ligado — XAU Twelve Data (OHLC) + SOL Kraken. Só alertas. xAPI XTB descontinuada."
   );
 }
 

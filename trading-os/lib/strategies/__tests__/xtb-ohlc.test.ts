@@ -111,105 +111,25 @@ describe("aggregateCandles M1→M5", () => {
 });
 
 /**
- * Comparação live opcional: se XTB_* estiver no env, faz login e puxa
- * a última vela M15 GOLD e compara close com a fixture (ordem de grandeza)
- * ou com TWELVE_DATA se só houver essa chave.
+ * Comparação live opcional via Twelve Data.
+ * Skip automático sem TWELVE_DATA_API_KEY — CI não falha.
  *
- * Skip automático sem credenciais — CI não falha.
+ * Nota: xAPI XTB foi descontinuada em 14/03/2025 — já não há live XTB.
  */
-describe("comparação live XTB / TwelveData (opcional)", () => {
-  it("close GOLD M15 da fonte live está na mesma ordem de grandeza que a fixture XTB", async () => {
-    const hasXtb = !!(process.env.XTB_LOGIN && process.env.XTB_PASSWORD);
-    const hasTd = !!process.env.TWELVE_DATA_API_KEY;
-    if (!hasXtb && !hasTd) {
-      console.log("[skip] sem XTB_* nem TWELVE_DATA_API_KEY — comparação live omitida");
+describe("comparação live Twelve Data (opcional)", () => {
+  it("close XAU/USD M15 da Twelve Data está na ordem de grandeza GOLD", async () => {
+    if (!process.env.TWELVE_DATA_API_KEY) {
+      console.log("[skip] sem TWELVE_DATA_API_KEY — comparação live omitida");
       return;
     }
 
-    let liveClose: number | null = null;
-
-    if (hasXtb) {
-      try {
-        const { default: WebSocketCtor } = await import("ws");
-        const type = (process.env.XTB_ACCOUNT_TYPE || "demo").toLowerCase() === "real" ? "real" : "demo";
-        const ws = new WebSocketCtor(`wss://ws.xtb.com/${type}`);
-        await new Promise<void>((resolve, reject) => {
-          const to = setTimeout(() => reject(new Error("timeout")), 12_000);
-          ws.on("open", () => {
-            clearTimeout(to);
-            resolve();
-          });
-          ws.on("error", reject);
-        });
-        const loginPayload = JSON.stringify({
-          command: "login",
-          arguments: {
-            userId: Number(process.env.XTB_LOGIN) || process.env.XTB_LOGIN,
-            password: process.env.XTB_PASSWORD,
-            appName: "TradingOS-Test",
-          },
-          customTag: "t1",
-        });
-        const loginRes: any = await new Promise((resolve, reject) => {
-          const to = setTimeout(() => reject(new Error("login timeout")), 15_000);
-          ws.on("message", (raw: Buffer) => {
-            const msg = JSON.parse(String(raw));
-            if (msg.customTag === "t1") {
-              clearTimeout(to);
-              resolve(msg);
-            }
-          });
-          ws.send(loginPayload);
-        });
-        if (!loginRes.status) throw new Error(loginRes.errorDescr || "login fail");
-
-        const chartPayload = JSON.stringify({
-          command: "getChartLastRequest",
-          arguments: {
-            info: {
-              period: 15,
-              start: Date.now() - 2 * 24 * 3600_000,
-              symbol: process.env.XTB_SYMBOL || "GOLD",
-            },
-          },
-          customTag: "t2",
-        });
-        const chartRes: any = await new Promise((resolve, reject) => {
-          const to = setTimeout(() => reject(new Error("chart timeout")), 20_000);
-          ws.on("message", (raw: Buffer) => {
-            const msg = JSON.parse(String(raw));
-            if (msg.customTag === "t2") {
-              clearTimeout(to);
-              resolve(msg);
-            }
-          });
-          ws.send(chartPayload);
-        });
-        ws.close();
-        const digits = chartRes?.returnData?.digits ?? 2;
-        const infos = chartRes?.returnData?.rateInfos || [];
-        if (infos.length) {
-          const last = rateInfoToCandle(infos[infos.length - 1], digits);
-          liveClose = last.close;
-        }
-      } catch (e: any) {
-        console.warn("[live XTB] falhou:", e?.message || e);
-      }
-    }
-
-    if (liveClose == null && hasTd) {
-      const { fetchTwelveDataOhlc } = await import("../../marketdata/twelvedata-client");
-      const bars = await fetchTwelveDataOhlc("M15", 5);
-      liveClose = bars[bars.length - 1]?.close ?? null;
-    }
+    const { fetchTwelveDataOhlc } = await import("../../marketdata/twelvedata-client");
+    const bars = await fetchTwelveDataOhlc("M15", 5);
+    const liveClose = bars[bars.length - 1]?.close ?? null;
 
     expect(liveClose).not.toBeNull();
-    // GOLD spot tipicamente 1000–10000 USD/oz neste ciclo de mercado —
-    // garante que não estamos a ler EURUSD ou escala errada (ex.: 4.18).
     expect(liveClose!).toBeGreaterThan(1000);
     expect(liveClose!).toBeLessThan(10000);
-    // Divergência relativa face à fixture de referência < 15% (mercado move-se;
-    // o objectivo é apanhar escala/símbolo errados, não tick-a-tick).
     const ref = XTB_GOLD_M15_SAMPLE.expected.close;
     const rel = Math.abs(liveClose! - ref) / ref;
     expect(rel).toBeLessThan(0.15);

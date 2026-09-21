@@ -26,8 +26,8 @@ export async function GET() {
     assets: {
       XAUUSD: {
         ...xau,
-        mode: "beta", // UI: badge beta/observação até calibração XTB confirmada
-        label: xau.beta ? "beta / observação" : "live",
+        mode: "beta",
+        label: "beta / observação (Twelve Data ≠ feed XTB)",
         cacheBars: cache,
       },
       SOLUSD: {
@@ -38,6 +38,6 @@ export async function GET() {
       },
     },
     runner,
-    note: "Motor só ALERTA — execução manual na corretora. XAUUSD em beta enquanto a fonte OHLC não for xAPI XTB verificada.",
+    note: "Motor só ALERTA — execução manual. XAUUSD: OHLC via Twelve Data (agregador); xAPI XTB descontinuada em 14/03/2025. Badge BETA avisa possível divergência de spread vs xStation.",
   });
 }

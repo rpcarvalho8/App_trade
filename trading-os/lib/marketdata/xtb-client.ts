@@ -1,32 +1,43 @@
 /**
- * Cliente XAUUSD via XTB xAPI (WebSocket) — OHLC reais.
+ * Cliente de mercado XAUUSD — OHLC reais via Twelve Data (fonte PRIMÁRIA).
  *
- * Docs: http://developers.xstore.pro/documentation/
- * Endpoints: wss://ws.xtb.com/{demo|real} + {demo|real}Stream
+ * ─────────────────────────────────────────────────────────────────────────
+ * XTB xAPI DESCONTINUADA (14 mar 2025): ws.xtb.com / xapi.xtb.com foram
+ * desligados pela XTB sem substituto oficial. Qualquer tentativa de login
+ * WebSocket falha independentemente das credenciais. O código xAPI antigo
+ * está em `xtb-xapi.dead.ts` só como referência histórica — NÃO é chamado.
+ * ─────────────────────────────────────────────────────────────────────────
  *
  * Env (.env.local):
- *   XTB_LOGIN, XTB_PASSWORD, XTB_ACCOUNT_TYPE=demo|real
- *   XTB_SYMBOL=GOLD          (símbolo xStation; default GOLD)
- *   TWELVE_DATA_API_KEY=...  (fallback OHLC se xAPI falhar / sem creds)
+ *   TWELVE_DATA_API_KEY=...   ← obrigatório para XAUUSD
  *
- * Fluxo:
+ * Fluxo (inalterado em conceito):
  *   1. Carrega cache SQLite (candle_cache)
- *   2. Backfill getChartLastRequest H4 (~30d) / M15 (~5d) / M5 (~1d)
- *      ou TwelveData time_series se xAPI indisponível
- *   3. Só depois marca warm-up completo → motor pode avaliar
- *   4. Stream getCandles (M1) + refresh periódico dos TFs superiores
+ *   2. Backfill time_series H4 / M15 / M5
+ *   3. Warm-up completo → motor pode avaliar
+ *   4. Poll periódico rate-limit-aware (plano Basic free)
+ *
+ * Plano Basic free (twelvedata.com/pricing, confirmado):
+ *   · 8 créditos API / minuto
+ *   · 800 créditos / dia
+ *   · time_series = 1 crédito por pedido
+ *
+ * Orçamento de polling (default):
+ *   · M5  a cada 5 min  → ~288/dia
+ *   · M15 a cada 15 min → ~96/dia
+ *   · H4  a cada 60 min → ~24/dia
+ *   · Backfill arranque  → 3 créditos
+ *   · Total ≈ 411/dia  (< 800, margem ~50%)
  *
  * Nunca sintetiza mechas a partir de um preço spot.
  */
 import { MultiTfBuffers } from "./candle-buffer";
-import { upsertCandle, aggregateCandles } from "./ohlc-utils";
-import { rateInfosToCandles, streamCandleToCandle, type XtbRateInfoRecord } from "./xtb-chart";
 import { fetchTwelveDataOhlc } from "./twelvedata-client";
 import { loadCachedCandles, saveCandlesToCache, cacheStats } from "./candle-cache";
 import type { Candle } from "@/lib/strategies/types";
 
 export const XAU_TIMEFRAMES = ["H4", "M15", "M5"] as const;
-export type XauSource = "xtb-xapi" | "twelvedata" | "cache" | "none";
+export type XauSource = "twelvedata" | "cache" | "none";
 
 export interface XtbTick {
   symbol: "XAUUSD";
@@ -50,16 +61,16 @@ export interface XauMarketStatus {
   bars: Record<string, number>;
   ready: boolean;
   message: string;
+  disclaimer: string;
   lastError?: string;
+  pollPlan?: string;
 }
 
-const PERIOD: Record<string, number> = { M1: 1, M5: 5, M15: 15, H4: 240 };
-
-/** Mínimos para considerar backfill completo (após cache + fetch). */
+/** Mínimos para considerar backfill completo. */
 const MIN_BARS: Record<string, number> = {
-  H4: 80, // ~30 dias úteis de H4
-  M15: 200, // ~5 dias
-  M5: 100, // ~1 dia
+  H4: 80,
+  M15: 200,
+  M5: 100,
 };
 
 const LOOKBACK_MS: Record<string, number> = {
@@ -68,55 +79,42 @@ const LOOKBACK_MS: Record<string, number> = {
   M5: 1 * 24 * 60 * 60 * 1000,
 };
 
-interface XtbState {
+/** Intervalos de refresh (ms) — cabem no Basic 800/dia. Override via env. */
+const DEFAULT_POLL_MS: Record<string, number> = {
+  M5: Number(process.env.XAU_POLL_M5_MS || 5 * 60_000),
+  M15: Number(process.env.XAU_POLL_M15_MS || 15 * 60_000),
+  H4: Number(process.env.XAU_POLL_H4_MS || 60 * 60_000),
+};
+
+const DISCLAIMER =
+  "Preço/OHLC via agregador Twelve Data (XAU/USD), não diretamente da corretora XTB — " +
+  "pode haver divergência de spread/cotação face ao xStation. Entrada continua manual.";
+
+interface XauState {
   started: boolean;
   buffers: MultiTfBuffers;
-  m1: Candle[];
   handlers: Set<XtbTickHandler>;
   status: XauWarmUpStatus;
   source: XauSource;
   lastPrice: number | null;
   lastError?: string;
-  streamSessionId?: string;
-  mainWs: any;
-  streamWs: any;
-  refreshTimer: NodeJS.Timeout | null;
-  pingTimer: NodeJS.Timeout | null;
-  pending: Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>;
-  reqId: number;
-  xtbSymbol: string;
+  timers: NodeJS.Timeout[];
 }
 
-function state(): XtbState {
+function state(): XauState {
   const g = globalThis as any;
-  if (!g.__tosXtbClientV2) {
-    g.__tosXtbClientV2 = {
+  if (!g.__tosXauClientV3) {
+    g.__tosXauClientV3 = {
       started: false,
       buffers: new MultiTfBuffers("XAUUSD", [...XAU_TIMEFRAMES], 2000),
-      m1: [],
       handlers: new Set(),
       status: "idle",
       source: "none",
       lastPrice: null,
-      mainWs: null,
-      streamWs: null,
-      refreshTimer: null,
-      pingTimer: null,
-      pending: new Map(),
-      reqId: 1,
-      xtbSymbol: process.env.XTB_SYMBOL || "GOLD",
-    } as XtbState;
+      timers: [],
+    } as XauState;
   }
-  return g.__tosXtbClientV2 as XtbState;
-}
-
-function accountType(): "demo" | "real" {
-  const t = (process.env.XTB_ACCOUNT_TYPE || "demo").toLowerCase();
-  return t === "real" ? "real" : "demo";
-}
-
-function hasXtbCreds(): boolean {
-  return !!(process.env.XTB_LOGIN && process.env.XTB_PASSWORD);
+  return g.__tosXauClientV3 as XauState;
 }
 
 function hasTwelveData(): boolean {
@@ -124,8 +122,7 @@ function hasTwelveData(): boolean {
 }
 
 function seedBuffer(tf: string, candles: Candle[]): void {
-  const s = state();
-  const buf = s.buffers.get(tf);
+  const buf = state().buffers.get(tf);
   if (!buf) return;
   buf.seed(candles);
 }
@@ -177,247 +174,56 @@ function markReady(source: XauSource, msg: string): void {
   }
 }
 
-// ---------- xAPI WebSocket helpers ----------
-
-function sendCommand(ws: any, command: string, arguments_?: Record<string, unknown>): Promise<any> {
-  const s = state();
-  const customTag = `tos-${s.reqId++}`;
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      s.pending.delete(customTag);
-      reject(new Error(`xAPI timeout: ${command}`));
-    }, 25_000);
-    s.pending.set(customTag, {
-      resolve: (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      reject: (e) => {
-        clearTimeout(t);
-        reject(e);
-      },
-    });
-    const payload: any = { command, customTag };
-    if (arguments_) payload.arguments = arguments_;
-    ws.send(JSON.stringify(payload));
-  });
+function pollPlanSummary(): string {
+  const m5 = DEFAULT_POLL_MS.M5 / 60_000;
+  const m15 = DEFAULT_POLL_MS.M15 / 60_000;
+  const h4 = DEFAULT_POLL_MS.H4 / 60_000;
+  const perDay =
+    Math.ceil((24 * 60) / m5) + Math.ceil((24 * 60) / m15) + Math.ceil((24 * 60) / h4) + 3;
+  return `M5/${m5}min · M15/${m15}min · H4/${h4}min ≈ ${perDay} créditos/dia (Basic free ≤800)`;
 }
 
-async function xtbLogin(WebSocketCtor: any): Promise<{ main: any; streamSessionId: string }> {
-  const type = accountType();
-  const url = `wss://ws.xtb.com/${type}`;
-  const main = new WebSocketCtor(url);
-
-  await new Promise<void>((resolve, reject) => {
-    const to = setTimeout(() => reject(new Error("WS main connect timeout")), 15_000);
-    main.on("open", () => {
-      clearTimeout(to);
-      resolve();
-    });
-    main.on("error", (e: any) => {
-      clearTimeout(to);
-      reject(e);
-    });
-  });
-
-  main.on("message", (raw: Buffer | string) => {
-    try {
-      const msg = JSON.parse(String(raw));
-      const tag = msg.customTag;
-      if (tag && state().pending.has(tag)) {
-        const p = state().pending.get(tag)!;
-        state().pending.delete(tag);
-        if (msg.status === false) {
-          p.reject(new Error(msg.errorDescr || msg.errorCode || "xAPI error"));
-        } else {
-          p.resolve(msg);
-        }
-      }
-    } catch {}
-  });
-
-  const login = await sendCommand(main, "login", {
-    userId: Number(process.env.XTB_LOGIN) || process.env.XTB_LOGIN,
-    password: process.env.XTB_PASSWORD,
-    appName: "TradingOS-SignalMotor",
-  });
-
-  const streamSessionId = login?.returnData?.streamSessionId;
-  if (!streamSessionId) throw new Error("login sem streamSessionId");
-  return { main, streamSessionId };
+async function sleep(ms: number): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchChartLast(main: any, tf: string, lookbackMs: number): Promise<Candle[]> {
+async function refreshTf(tf: string, outputsize: number): Promise<void> {
   const s = state();
-  const period = PERIOD[tf];
-  const start = Date.now() - lookbackMs;
-  const msg = await sendCommand(main, "getChartLastRequest", {
-    info: { period, start, symbol: s.xtbSymbol },
-  });
-  const data = msg?.returnData;
-  const digits = Number(data?.digits ?? 2);
-  const rateInfos = (data?.rateInfos || []) as XtbRateInfoRecord[];
-  return rateInfosToCandles(rateInfos, digits);
-}
-
-async function connectStream(WebSocketCtor: any, streamSessionId: string): Promise<any> {
-  const type = accountType();
-  const url = `wss://ws.xtb.com/${type}Stream`;
-  const ws = new WebSocketCtor(url);
-  await new Promise<void>((resolve, reject) => {
-    const to = setTimeout(() => reject(new Error("WS stream connect timeout")), 15_000);
-    ws.on("open", () => {
-      clearTimeout(to);
-      resolve();
-    });
-    ws.on("error", (e: any) => {
-      clearTimeout(to);
-      reject(e);
-    });
-  });
-
-  const s = state();
-  // getCandles entrega M1; agregamos para M5/M15/H4
-  ws.send(
-    JSON.stringify({
-      command: "getCandles",
-      streamSessionId,
-      symbol: s.xtbSymbol,
-    })
-  );
-  ws.send(JSON.stringify({ command: "getKeepAlive", streamSessionId }));
-
-  ws.on("message", (raw: Buffer | string) => {
-    try {
-      const msg = JSON.parse(String(raw));
-      if (msg.command === "candle" && msg.data) {
-        const c = streamCandleToCandle(msg.data);
-        s.m1 = upsertCandle(s.m1, c, 4000);
-        // Atualiza TFs superiores a partir de M1 reais
-        for (const tf of XAU_TIMEFRAMES) {
-          const agg = aggregateCandles(s.m1, tf);
-          const buf = s.buffers.get(tf);
-          if (buf && agg.length) {
-            // merge: mantém histórico backfill + actualiza barras recentes
-            const existing = buf.candles;
-            const merged = new Map<number, Candle>();
-            for (const e of existing) merged.set(e.time, e);
-            for (const a of agg.slice(-50)) merged.set(a.time, a);
-            buf.seed([...merged.values()]);
-          }
-        }
-        emitFromLast("xtb-xapi");
-        // Persistência assíncrona (não bloqueia)
-        saveCandlesToCache("XAUUSD", "M5", s.buffers.get("M5")?.candles.slice(-5) || [], "xtb-xapi").catch(
-          () => {}
-        );
-      }
-    } catch {}
-  });
-
-  ws.on("close", () => {
-    console.warn("[xtb-client] stream fechado — reconnect em 8s.");
-    s.streamWs = null;
-    setTimeout(() => {
-      if (s.started && s.streamSessionId) {
-        connectStream(WebSocketCtor, s.streamSessionId).then((w) => {
-          s.streamWs = w;
-        }).catch((e) => console.warn("[xtb-client] reconnect stream:", e?.message || e));
-      }
-    }, 8000);
-  });
-
-  return ws;
-}
-
-async function backfillViaXtb(): Promise<boolean> {
-  let WebSocketCtor: any;
-  try {
-    ({ default: WebSocketCtor } = await import("ws"));
-  } catch {
-    throw new Error("pacote 'ws' indisponível");
-  }
-
-  const { main, streamSessionId } = await xtbLogin(WebSocketCtor);
-  const s = state();
-  s.mainWs = main;
-  s.streamSessionId = streamSessionId;
-
-  for (const tf of XAU_TIMEFRAMES) {
-    const candles = await fetchChartLast(main, tf, LOOKBACK_MS[tf]);
-    if (candles.length) {
-      seedBuffer(tf, candles);
-      await saveCandlesToCache("XAUUSD", tf, candles, "xtb-xapi");
-      console.log(`[xtb-client] xAPI backfill ${tf}: ${candles.length} barras (${s.xtbSymbol})`);
-    } else {
-      console.warn(`[xtb-client] xAPI ${tf}: 0 barras`);
-    }
-  }
-
-  // ping keep-alive na conexão main
-  s.pingTimer = setInterval(() => {
-    sendCommand(main, "ping").catch(() => {});
-  }, 20_000);
-
-  // refresh periódico dos TFs (últimas ~2 janelas) — OHLC real, não spot
-  s.refreshTimer = setInterval(() => {
-    (async () => {
-      for (const tf of XAU_TIMEFRAMES) {
-        try {
-          const candles = await fetchChartLast(main, tf, LOOKBACK_MS[tf] / 4);
-          if (!candles.length) continue;
-          const buf = s.buffers.get(tf)!;
-          const merged = new Map<number, Candle>();
-          for (const e of buf.candles) merged.set(e.time, e);
-          for (const c of candles) merged.set(c.time, c);
-          buf.seed([...merged.values()]);
-          await saveCandlesToCache("XAUUSD", tf, candles.slice(-30), "xtb-xapi");
-        } catch (e: any) {
-          console.warn(`[xtb-client] refresh ${tf}:`, e?.message || e);
-        }
-      }
-      emitFromLast("xtb-xapi");
-    })().catch(() => {});
-  }, 60_000);
-
-  s.streamWs = await connectStream(WebSocketCtor, streamSessionId);
-  markReady("xtb-xapi", `symbol=${s.xtbSymbol}`);
-  emitFromLast("xtb-xapi");
-  return warmUpComplete();
+  const candles = await fetchTwelveDataOhlc(tf, outputsize);
+  if (!candles.length) return;
+  const buf = s.buffers.get(tf)!;
+  const merged = new Map<number, Candle>();
+  for (const e of buf.candles) merged.set(e.time, e);
+  for (const c of candles) merged.set(c.time, c);
+  buf.seed([...merged.values()]);
+  await saveCandlesToCache("XAUUSD", tf, candles.slice(-20), "twelvedata");
 }
 
 async function backfillViaTwelveData(): Promise<boolean> {
   const sizes: Record<string, number> = { H4: 250, M15: 500, M5: 400 };
+  // Espaça pedidos para respeitar 8 créditos/min no Basic
   for (const tf of XAU_TIMEFRAMES) {
     const candles = await fetchTwelveDataOhlc(tf, sizes[tf]);
     seedBuffer(tf, candles);
     await saveCandlesToCache("XAUUSD", tf, candles, "twelvedata");
     console.log(`[xtb-client] TwelveData backfill ${tf}: ${candles.length} barras`);
+    await sleep(8_000); // ≤8/min com margem
   }
-  markReady("twelvedata", "fallback OHLC real (não XTB)");
+  markReady("twelvedata", "fonte primária OHLC (agregador de mercado)");
   emitFromLast("twelvedata");
 
-  // Poll periódico time_series (últimas barras) — ainda OHLC, não spot
   const s = state();
-  s.refreshTimer = setInterval(() => {
-    (async () => {
-      for (const tf of XAU_TIMEFRAMES) {
-        try {
-          const candles = await fetchTwelveDataOhlc(tf, 30);
-          const buf = s.buffers.get(tf)!;
-          const merged = new Map<number, Candle>();
-          for (const e of buf.candles) merged.set(e.time, e);
-          for (const c of candles) merged.set(c.time, c);
-          buf.seed([...merged.values()]);
-          await saveCandlesToCache("XAUUSD", tf, candles.slice(-10), "twelvedata");
-        } catch (e: any) {
-          console.warn(`[xtb-client] TwelveData refresh ${tf}:`, e?.message || e);
-        }
-      }
-      emitFromLast("twelvedata");
-    })().catch(() => {});
-  }, 90_000);
-
+  // Poll staggered por TF
+  for (const tf of XAU_TIMEFRAMES) {
+    const interval = DEFAULT_POLL_MS[tf];
+    const t = setInterval(() => {
+      refreshTf(tf, 30)
+        .then(() => emitFromLast("twelvedata"))
+        .catch((e: any) => console.warn(`[xtb-client] refresh ${tf}:`, e?.message || e));
+    }, interval);
+    s.timers.push(t);
+  }
+  console.log(`[xtb-client] poll plan: ${pollPlanSummary()}`);
   return warmUpComplete();
 }
 
@@ -432,7 +238,6 @@ async function loadFromCache(): Promise<void> {
   }
   if (warmUpComplete()) {
     state().source = "cache";
-    // ainda warming até confirmar fonte live, mas permite progresso visual
   }
 }
 
@@ -443,41 +248,27 @@ export function startXtbClient(): void {
   s.started = true;
   s.status = "warming_up";
 
+  console.log(
+    "[xtb-client] XTB xAPI descontinuada (14 mar 2025) — fonte primária: Twelve Data. " +
+      "Ver xtb-xapi.dead.ts para o código histórico."
+  );
+
   (async () => {
     try {
       await loadFromCache();
-
-      if (hasXtbCreds()) {
-        try {
-          await backfillViaXtb();
-          return;
-        } catch (e: any) {
-          s.lastError = e?.message || String(e);
-          console.warn(
-            "[xtb-client] xAPI falhou — a tentar TwelveData. Motivo:",
-            s.lastError
-          );
-        }
-      } else {
-        console.warn(
-          "[xtb-client] XTB_LOGIN/XTB_PASSWORD ausentes — usa TwelveData se TWELVE_DATA_API_KEY estiver definida."
-        );
-      }
 
       if (hasTwelveData()) {
         await backfillViaTwelveData();
         return;
       }
 
-      // Só cache — se suficiente, ready mas beta; senão erro
       if (warmUpComplete()) {
-        markReady("cache", "apenas cache local (sem fonte live)");
+        markReady("cache", "apenas cache local (sem TWELVE_DATA_API_KEY)");
         emitFromLast("cache");
       } else {
         s.status = "error";
         s.lastError =
-          s.lastError ||
-          "Sem XTB_LOGIN/PASSWORD nem TWELVE_DATA_API_KEY — impossível obter OHLC real.";
+          "TWELVE_DATA_API_KEY em falta — obrigatória para XAUUSD (xAPI XTB descontinuada em mar/2025).";
         console.error("[xtb-client]", s.lastError);
       }
     } catch (e: any) {
@@ -490,18 +281,8 @@ export function startXtbClient(): void {
 
 export function stopXtbClient(): void {
   const s = state();
-  if (s.refreshTimer) clearInterval(s.refreshTimer);
-  if (s.pingTimer) clearInterval(s.pingTimer);
-  s.refreshTimer = null;
-  s.pingTimer = null;
-  try {
-    s.mainWs?.close();
-  } catch {}
-  try {
-    s.streamWs?.close();
-  } catch {}
-  s.mainWs = null;
-  s.streamWs = null;
+  for (const t of s.timers) clearInterval(t);
+  s.timers = [];
   s.started = false;
   s.status = "idle";
 }
@@ -521,32 +302,33 @@ export function isXauReady(): boolean {
 }
 
 /**
- * XAUUSD fica em beta/observação até a fonte ser xAPI XTB verificada.
- * TwelveData e cache contam como beta (não são a cotação XTB).
+ * XAUUSD permanece BETA/OBSERVAÇÃO: a cotação vem de um agregador (Twelve Data),
+ * não do feed da corretora — possível divergência de spread vs xStation.
  */
 export function getXauMarketStatus(): XauMarketStatus {
   const s = state();
   const bars = barsSnapshot();
   const ready = s.status === "ready" && warmUpComplete();
-  const beta = s.source !== "xtb-xapi" || !ready;
+  const beta = true; // sempre beta enquanto a fonte ≠ corretora
   let message = "";
-  if (s.status === "warming_up") message = "A carregar OHLC histórico (backfill)…";
+  if (s.status === "warming_up") message = "A carregar OHLC histórico (backfill Twelve Data)…";
   else if (s.status === "error") message = s.lastError || "Erro na fonte de dados XAU";
-  else if (s.source === "xtb-xapi") message = "OHLC via XTB xAPI";
   else if (s.source === "twelvedata")
-    message = "OHLC via TwelveData (fallback) — beta/observação vs XTB";
+    message = "OHLC via Twelve Data (agregador) — não é o feed XTB/xStation";
   else if (s.source === "cache") message = "A usar só cache local — beta";
-  else message = "Fonte XAU não configurada";
+  else message = "Define TWELVE_DATA_API_KEY em .env.local";
 
   return {
     status: s.status,
     source: s.source,
     beta,
-    symbol: s.xtbSymbol,
+    symbol: "XAU/USD",
     bars,
     ready,
     message,
+    disclaimer: DISCLAIMER,
     lastError: s.lastError,
+    pollPlan: pollPlanSummary(),
   };
 }
 
@@ -554,9 +336,7 @@ export async function getXauCacheStats() {
   return cacheStats("XAUUSD");
 }
 
-/** @deprecated — removido. Mantido só para não partir imports acidentais. */
+/** @deprecated */
 export function seedSyntheticHistory(_price: number, _bars = 80): void {
-  console.warn(
-    "[xtb-client] seedSyntheticHistory foi removido — use xAPI / TwelveData OHLC real."
-  );
+  console.warn("[xtb-client] seedSyntheticHistory removido — use Twelve Data OHLC.");
 }
