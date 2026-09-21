@@ -66,9 +66,49 @@ Usam **Google Gemini** (`GEMINI_API_KEY`), não Anthropic.
 
 ---
 
+## 📡 Motor de Sinais (alert-only)
+
+O runner em `lib/marketdata/signal-runner.ts` avalia as estratégias JSON e grava em `signals` + alerta (WS/som/email). **Não envia ordens** à corretora.
+
+### Fontes de mercado — estado actual
+
+| | XAUUSD (`xtb-client.ts`) | SOLUSD (`kraken-client.ts`) |
+|--|--------------------------|-----------------------------|
+| **Fonte** | [gold-api.com](https://gold-api.com/) — spot XAU | Kraken public REST + WS |
+| **Endpoint preço** | `GET https://api.gold-api.com/price/XAU` (sem auth) | `GET https://api.kraken.com/0/public/Ticker?pair=SOLUSD` + `wss://ws.kraken.com` ticker `SOL/USD` |
+| **Gratuita?** | Sim (docs: real-time sem rate limit; histórico/OHLC free capped ~10/h — **não usamos OHLC desta API**) | Sim (API pública Kraken) |
+| **Latência típica** | ~300–400 ms RTT neste ambiente cloud (poll); docs afirmam resposta “instant” em memória | REST OHLC/Ticker tipicamente &lt;1 s; WS quase tempo-real |
+| **Poll** | Default `XAU_POLL_MS=15000` | Default `SOL_POLL_MS=10000` (+ WS se `SOL_USE_WS≠0`) |
+| **Comparado com XTB?** | **Não.** Não há calibração automática vs cotação xStation. O nome `xtb-client` é só convenção do playbook (execução manual na XTB). Spot gold-api ≠ CFDs XTB (spread/offset). | N/A (fonte = exchange Kraken) |
+
+### Backfill de candles ao arrancar
+
+| Cliente | Comportamento |
+|---------|----------------|
+| **XAU** | **Sem OHLC histórico real.** No primeiro tick com preço, chama `seedSyntheticHistory(price)` (~80 barras **sintéticas** por TF H4/M15/M5). Depois agrega ticks de poll nos buffers. Até ao 1.º preço bem-sucedido os buffers estão vazios. |
+| **SOL** | **Sim — backfill REST real.** `seedSolHistory()` chama `OHLC?pair=SOLUSD&interval=15|1` e faz `buffer.seed(candles)` para `15m` e `1m` **antes** de depender só do stream. Se o seed falhar, os buffers ficam vazios até chegarem ticks. |
+
+### Queda de ligação / restart do processo
+
+| Cenário | Comportamento |
+|---------|----------------|
+| **XAU poll falha** | O intervalo continua; essa leitura é ignorada (`null`). Não há WS a “reconectar”. Buffer em memória **mantém-se** enquanto o processo Node viver. |
+| **Kraken WS fecha** | Reconnect automático após **5 s** (`connectWs` no `close`). O **buffer em memória mantém-se** (não é limpo no reconnect). O poll REST continua em paralelo. |
+| **Restart da app (`npm run dev` / novo processo)** | Buffers **perdem-se** (vivem em `globalThis`). XAU volta a seed sintético no 1.º preço; SOL volta a fazer backfill REST OHLC. Estado do engine (passo actual da sequência) também reinicia. |
+
+### Persistência de `signals`
+
+Registos em **SQLite** (`trading-os/trading.db`, tabela `signals` via `@libsql/client`). **Sobrevivem a restart** da app. Não são só memória. Buffer WS de toasts recentes é que é in-memory (máx. ~30 alertas).
+
+Consulta: `GET /api/signals`.
+
+Email opcional: `ALERT_EMAIL_TO` + `RESEND_API_KEY` ou `ALERT_EMAIL_WEBHOOK`.
+
+---
+
 ## 🗄️ Base de Dados
 
-SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**.
+SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**. Inclui tabela `signals` do motor.
 
 **Backup:**
 
@@ -88,7 +128,8 @@ npm run db:backup
 - **LibSQL** — SQLite local
 - **Recharts** — gráficos
 - **Gemini API** — brief e coach
-- **WebSocket** — alertas de preço / calendário (porta 3001)
+- **WebSocket** — alertas preço / calendário / **sinais** (porta 3001)
+- **Vitest** — detectors + engine (`npm test`)
 
 ---
 
@@ -98,7 +139,10 @@ npm run db:backup
 - [x] Screenshot upload
 - [x] Alertas in-app (preço + calendário)
 - [x] Mesa de Operação XAUUSD / SOLUSD
+- [x] Motor de sinais alert-only (XAU London Structure + SOL SMC 3-Step)
+- [ ] Backfill OHLC real para XAU (hoje: histórico sintético)
+- [ ] Calibração gold-api vs cotação XTB (spread/offset)
 - [ ] Módulo Prop Firms
 - [ ] Export PDF de relatório mensal
-- [ ] Alertas email/Telegram
+- [ ] Alertas email/Telegram (email parcial via env)
 - [ ] Backtesting de setups
