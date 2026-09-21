@@ -25,6 +25,14 @@ type AssetStatus = {
   cacheBars?: Record<string, number>;
   lastError?: string;
   pollPlan?: string;
+  credits?: {
+    day?: string;
+    used?: number;
+    limit?: number;
+    remaining?: number;
+    pct?: number;
+    byTf?: Record<string, number>;
+  };
 };
 
 export default function SignalsPage() {
@@ -206,6 +214,17 @@ function AssetCard({
         {asset.message && <div style={{ color: C.muted, marginTop: 4 }}>{asset.message}</div>}
         {asset.pollPlan && (
           <div style={{ color: C.muted, marginTop: 4, fontSize: 10 }}>Poll: {asset.pollPlan}</div>
+        )}
+        {asset.credits && (
+          <div style={{ color: asset.credits.pct != null && asset.credits.pct >= 80 ? C.amber : C.muted, marginTop: 4, fontSize: 10 }}>
+            Créditos TD hoje: {asset.credits.used ?? 0}/{asset.credits.limit ?? 800}
+            {asset.credits.pct != null ? ` (${asset.credits.pct}%)` : ""}
+            {asset.credits.byTf
+              ? ` · ${Object.entries(asset.credits.byTf)
+                  .map(([k, v]) => `${k}=${v}`)
+                  .join(" ")}`
+              : ""}
+          </div>
         )}
         {asset.lastError && (
           <div style={{ color: C.red, marginTop: 6, fontSize: 10 }}>{asset.lastError}</div>

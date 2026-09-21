@@ -3,36 +3,29 @@
  *
  * ─────────────────────────────────────────────────────────────────────────
  * XTB xAPI DESCONTINUADA (14 mar 2025): ws.xtb.com / xapi.xtb.com foram
- * desligados pela XTB sem substituto oficial. Qualquer tentativa de login
- * WebSocket falha independentemente das credenciais. O código xAPI antigo
- * está em `xtb-xapi.dead.ts` só como referência histórica — NÃO é chamado.
+ * desligados pela XTB sem substituto oficial. Código histórico em
+ * `xtb-xapi.dead.ts` — NÃO é chamado.
  * ─────────────────────────────────────────────────────────────────────────
  *
- * Env (.env.local):
- *   TWELVE_DATA_API_KEY=...   ← obrigatório para XAUUSD
+ * Env: TWELVE_DATA_API_KEY (obrigatória)
  *
- * Fluxo (inalterado em conceito):
- *   1. Carrega cache SQLite (candle_cache)
- *   2. Backfill time_series H4 / M15 / M5
- *   3. Warm-up completo → motor pode avaliar
- *   4. Poll periódico rate-limit-aware (plano Basic free)
+ * Polling alinhado ao FECHO de vela (não mais curto que o TF):
+ *   · M5  → no máximo a cada 5 min  (só se a barra M5 mudou)
+ *   · M15 → no máximo a cada 15 min
+ *   · H4  → no máximo a cada 4 h
  *
- * Plano Basic free (twelvedata.com/pricing, confirmado):
- *   · 8 créditos API / minuto
- *   · 800 créditos / dia
- *   · time_series = 1 crédito por pedido
+ * Orçamento créditos (Basic free ≤800/dia, 1 crédito = 1 time_series):
  *
- * Orçamento de polling (default):
- *   · M5  a cada 5 min  → ~288/dia
- *   · M15 a cada 15 min → ~96/dia
- *   · H4  a cada 60 min → ~24/dia
- *   · Backfill arranque  → 3 créditos
- *   · Total ≈ 411/dia  (< 800, margem ~50%)
+ *   24h contínuo (gold quase 24/5):
+ *     M5  288 + M15 96 + H4 6 + backfill 3 = ~393/dia  (~49% da quota)
  *
- * Nunca sintetiza mechas a partir de um preço spot.
+ *   Só sessões London/NY ~8h (se o processo só correr nesse período):
+ *     M5   96 + M15 32 + H4 2 + backfill 3 = ~133/dia  (~17% da quota)
+ *
+ * Margem confortável em ambos os cenários — sem necessidade de polir mais.
  */
-import { MultiTfBuffers } from "./candle-buffer";
-import { fetchTwelveDataOhlc } from "./twelvedata-client";
+import { MultiTfBuffers, tfToMs, floorTime } from "./candle-buffer";
+import { fetchTwelveDataOhlc, getTwelveDataCreditStats } from "./twelvedata-client";
 import { loadCachedCandles, saveCandlesToCache, cacheStats } from "./candle-cache";
 import type { Candle } from "@/lib/strategies/types";
 
@@ -64,6 +57,7 @@ export interface XauMarketStatus {
   disclaimer: string;
   lastError?: string;
   pollPlan?: string;
+  credits?: ReturnType<typeof getTwelveDataCreditStats>;
 }
 
 /** Mínimos para considerar backfill completo. */
@@ -79,11 +73,14 @@ const LOOKBACK_MS: Record<string, number> = {
   M5: 1 * 24 * 60 * 60 * 1000,
 };
 
-/** Intervalos de refresh (ms) — cabem no Basic 800/dia. Override via env. */
-const DEFAULT_POLL_MS: Record<string, number> = {
-  M5: Number(process.env.XAU_POLL_M5_MS || 5 * 60_000),
-  M15: Number(process.env.XAU_POLL_M15_MS || 15 * 60_000),
-  H4: Number(process.env.XAU_POLL_H4_MS || 60 * 60_000),
+/**
+ * Intervalo mínimo = duração da vela (nunca mais curto).
+ * H4 = 4h (antes estava 60 min — pedíamos a mais).
+ */
+const CANDLE_MS: Record<string, number> = {
+  M5: 5 * 60_000,
+  M15: 15 * 60_000,
+  H4: 4 * 60 * 60_000,
 };
 
 const DISCLAIMER =
@@ -99,6 +96,9 @@ interface XauState {
   lastPrice: number | null;
   lastError?: string;
   timers: NodeJS.Timeout[];
+  /** Última barra (epoch floor) para a qual já pedimos dados, por TF. */
+  lastFetchedBar: Record<string, number>;
+  skippedPolls: number;
 }
 
 function state(): XauState {
@@ -112,6 +112,8 @@ function state(): XauState {
       source: "none",
       lastPrice: null,
       timers: [],
+      lastFetchedBar: {},
+      skippedPolls: 0,
     } as XauState;
   }
   return g.__tosXauClientV3 as XauState;
@@ -174,56 +176,114 @@ function markReady(source: XauSource, msg: string): void {
   }
 }
 
+/** Estimativa diária a 24h vs ~8h London/NY. */
+export function estimateDailyCredits(): {
+  continuous24h: number;
+  session8h: number;
+  breakdown24h: Record<string, number>;
+  breakdown8h: Record<string, number>;
+  note: string;
+} {
+  const m5 = Math.ceil((24 * 60) / 5);
+  const m15 = Math.ceil((24 * 60) / 15);
+  const h4 = Math.ceil((24 * 60) / 240);
+  const backfill = 3;
+  const m5_8 = Math.ceil((8 * 60) / 5);
+  const m15_8 = Math.ceil((8 * 60) / 15);
+  const h4_8 = Math.ceil((8 * 60) / 240);
+  return {
+    continuous24h: m5 + m15 + h4 + backfill,
+    session8h: m5_8 + m15_8 + h4_8 + backfill,
+    breakdown24h: { M5: m5, M15: m15, H4: h4, backfill },
+    breakdown8h: { M5: m5_8, M15: m15_8, H4: h4_8, backfill },
+    note: "1 crédito = 1 time_series; Basic free ≤800/dia",
+  };
+}
+
 function pollPlanSummary(): string {
-  const m5 = DEFAULT_POLL_MS.M5 / 60_000;
-  const m15 = DEFAULT_POLL_MS.M15 / 60_000;
-  const h4 = DEFAULT_POLL_MS.H4 / 60_000;
-  const perDay =
-    Math.ceil((24 * 60) / m5) + Math.ceil((24 * 60) / m15) + Math.ceil((24 * 60) / h4) + 3;
-  return `M5/${m5}min · M15/${m15}min · H4/${h4}min ≈ ${perDay} créditos/dia (Basic free ≤800)`;
+  const e = estimateDailyCredits();
+  return (
+    `fecho-alinhado M5/5m · M15/15m · H4/4h → ` +
+    `~${e.continuous24h}/dia (24h) ou ~${e.session8h}/dia (8h London/NY) · Basic ≤800`
+  );
 }
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function refreshTf(tf: string, outputsize: number): Promise<void> {
+/**
+ * Só pede se uma nova vela do TF pode ter aberto/fechado desde o último fetch.
+ * Ex.: M5 só quando floor(now, 5m) > lastFetchedBar.
+ */
+function shouldFetchForNewCandle(tf: string, now = Date.now()): boolean {
+  const s = state();
+  const period = CANDLE_MS[tf] || tfToMs(tf);
+  const currentBar = floorTime(now, period);
+  const last = s.lastFetchedBar[tf];
+  if (last != null && currentBar <= last) {
+    s.skippedPolls++;
+    return false;
+  }
+  return true;
+}
+
+async function refreshTf(tf: string, outputsize: number): Promise<boolean> {
+  if (!shouldFetchForNewCandle(tf)) return false;
   const s = state();
   const candles = await fetchTwelveDataOhlc(tf, outputsize);
-  if (!candles.length) return;
+  if (!candles.length) return false;
   const buf = s.buffers.get(tf)!;
   const merged = new Map<number, Candle>();
   for (const e of buf.candles) merged.set(e.time, e);
   for (const c of candles) merged.set(c.time, c);
   buf.seed([...merged.values()]);
   await saveCandlesToCache("XAUUSD", tf, candles.slice(-20), "twelvedata");
+  const period = CANDLE_MS[tf] || tfToMs(tf);
+  s.lastFetchedBar[tf] = floorTime(Date.now(), period);
+  return true;
 }
 
 async function backfillViaTwelveData(): Promise<boolean> {
   const sizes: Record<string, number> = { H4: 250, M15: 500, M5: 400 };
-  // Espaça pedidos para respeitar 8 créditos/min no Basic
+  const s = state();
   for (const tf of XAU_TIMEFRAMES) {
     const candles = await fetchTwelveDataOhlc(tf, sizes[tf]);
     seedBuffer(tf, candles);
     await saveCandlesToCache("XAUUSD", tf, candles, "twelvedata");
+    const period = CANDLE_MS[tf];
+    s.lastFetchedBar[tf] = floorTime(Date.now(), period);
     console.log(`[xtb-client] TwelveData backfill ${tf}: ${candles.length} barras`);
-    await sleep(8_000); // ≤8/min com margem
+    await sleep(8_000); // ≤8/min
   }
   markReady("twelvedata", "fonte primária OHLC (agregador de mercado)");
   emitFromLast("twelvedata");
 
-  const s = state();
-  // Poll staggered por TF
-  for (const tf of XAU_TIMEFRAMES) {
-    const interval = DEFAULT_POLL_MS[tf];
-    const t = setInterval(() => {
-      refreshTf(tf, 30)
-        .then(() => emitFromLast("twelvedata"))
-        .catch((e: any) => console.warn(`[xtb-client] refresh ${tf}:`, e?.message || e));
-    }, interval);
-    s.timers.push(t);
-  }
-  console.log(`[xtb-client] poll plan: ${pollPlanSummary()}`);
+  // Tick a cada 60s: cada TF só dispara pedido se a barra mudou (gate acima).
+  const tick = setInterval(() => {
+    (async () => {
+      let any = false;
+      for (const tf of XAU_TIMEFRAMES) {
+        try {
+          if (await refreshTf(tf, 30)) any = true;
+        } catch (e: any) {
+          console.warn(`[xtb-client] refresh ${tf}:`, e?.message || e);
+        }
+      }
+      if (any) emitFromLast("twelvedata");
+    })().catch(() => {});
+  }, 60_000);
+  s.timers.push(tick);
+
+  const est = estimateDailyCredits();
+  console.log(
+    `[xtb-client] poll plan: ${pollPlanSummary()} | créditos agora:`,
+    getTwelveDataCreditStats()
+  );
+  console.log(
+    `[xtb-client] orçamento: 24h≈${est.continuous24h} · 8h≈${est.session8h} · breakdown24h=`,
+    est.breakdown24h
+  );
   return warmUpComplete();
 }
 
@@ -301,15 +361,11 @@ export function isXauReady(): boolean {
   return state().status === "ready" && warmUpComplete();
 }
 
-/**
- * XAUUSD permanece BETA/OBSERVAÇÃO: a cotação vem de um agregador (Twelve Data),
- * não do feed da corretora — possível divergência de spread vs xStation.
- */
 export function getXauMarketStatus(): XauMarketStatus {
   const s = state();
   const bars = barsSnapshot();
   const ready = s.status === "ready" && warmUpComplete();
-  const beta = true; // sempre beta enquanto a fonte ≠ corretora
+  const beta = true;
   let message = "";
   if (s.status === "warming_up") message = "A carregar OHLC histórico (backfill Twelve Data)…";
   else if (s.status === "error") message = s.lastError || "Erro na fonte de dados XAU";
@@ -329,6 +385,7 @@ export function getXauMarketStatus(): XauMarketStatus {
     disclaimer: DISCLAIMER,
     lastError: s.lastError,
     pollPlan: pollPlanSummary(),
+    credits: getTwelveDataCreditStats(),
   };
 }
 

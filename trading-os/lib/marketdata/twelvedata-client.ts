@@ -1,11 +1,16 @@
 /**
- * Twelve Data — fallback de OHLC real para XAU/USD quando a xAPI XTB
- * não está disponível (sem credenciais ou API indisponível).
- *
+ * Twelve Data — fonte PRIMÁRIA de OHLC real para XAU/USD.
  * Nunca reconstrói candles a partir de um spot único.
  * Docs: https://twelvedata.com/docs#time-series
+ *
+ * Basic free: 8 créditos/min · 800/dia · time_series = 1 crédito.
  */
 import type { Candle } from "@/lib/strategies/types";
+import {
+  recordTwelveDataCredit,
+  wouldExceedDailyLimit,
+  getTwelveDataCreditStats,
+} from "./twelve-data-credits";
 
 const BASE = "https://api.twelvedata.com";
 
@@ -25,6 +30,13 @@ export async function fetchTwelveDataOhlc(
   const interval = TF_TO_INTERVAL[tf] || TF_TO_INTERVAL[tf.toUpperCase()];
   if (!interval) throw new Error(`TF não suportado: ${tf}`);
 
+  if (wouldExceedDailyLimit(1)) {
+    const s = getTwelveDataCreditStats();
+    throw new Error(
+      `Twelve Data quota diária esgotada (${s.used}/${s.limit} em ${s.day}) — a saltar pedido ${tf}`
+    );
+  }
+
   const url =
     `${BASE}/time_series?symbol=${encodeURIComponent("XAU/USD")}` +
     `&interval=${interval}&outputsize=${outputsize}&order=ASC&apikey=${encodeURIComponent(apiKey)}`;
@@ -38,6 +50,9 @@ export async function fetchTwelveDataOhlc(
   if (j?.status === "error" || j?.code) {
     throw new Error(j?.message || `TwelveData error ${j?.code}`);
   }
+
+  recordTwelveDataCredit(tf, 1);
+
   const values: any[] = j?.values || [];
   return values
     .map((v) => ({
@@ -51,3 +66,5 @@ export async function fetchTwelveDataOhlc(
     .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.close))
     .sort((a, b) => a.time - b.time);
 }
+
+export { getTwelveDataCreditStats };

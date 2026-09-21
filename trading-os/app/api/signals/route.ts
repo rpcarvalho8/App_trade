@@ -38,6 +38,7 @@ export async function GET() {
       },
     },
     runner,
+    credits: xau.credits,
     note: "Motor só ALERTA — execução manual. XAUUSD: OHLC via Twelve Data (agregador); xAPI XTB descontinuada em 14/03/2025. Badge BETA avisa possível divergência de spread vs xStation.",
   });
 }

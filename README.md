@@ -79,7 +79,7 @@ UI: [`/signals`](http://localhost:3000/signals) — XAUUSD com badge **BETA / OB
 |--|--------------------------|-----------------------------|
 | **Fonte primária** | **Twelve Data** `time_series` `XAU/USD` (`TWELVE_DATA_API_KEY`) | Kraken public REST + WS |
 | **XTB xAPI** | **Descontinuada 14/03/2025** (ws.xtb.com / xapi.xtb.com) — dead code em `xtb-xapi.dead.ts` | — |
-| **Plano free TD** | Basic: **8 créditos/min · 800/dia** ([pricing](https://twelvedata.com/pricing)); poll default ≈ **411/dia** (M5/5min + M15/15min + H4/60min + 3 backfill) | — |
+| **Plano free TD** | Basic: **8 créditos/min · 800/dia**; poll fecho-alinhado ≈ **393/dia (24h)** ou **~133/dia (8h London/NY)** — margem confortável | — |
 | **Sintético / gold-api?** | **Removido.** | — |
 | **vs XTB xStation** | Agregador de mercado — **possível divergência de spread**; entrada manual | N/A |
 
