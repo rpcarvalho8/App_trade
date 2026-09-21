@@ -12,12 +12,14 @@ import type { WebSocketServer, WebSocket } from "ws";
 
 export interface MarketAlert {
   id: string;
-  type: "price" | "calendar";
+  type: "price" | "calendar" | "signal";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;
   message: string;
   ts: number; // epoch ms
+  /** Metadados de auditoria (ex.: passos de confluência do motor de sinais). */
+  meta?: Record<string, unknown>;
 }
 
 export const WS_PORT = Number(process.env.ALERTS_WS_PORT || 3001);

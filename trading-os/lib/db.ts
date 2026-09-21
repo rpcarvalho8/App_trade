@@ -96,6 +96,25 @@ export async function initDB() {
       body TEXT NOT NULL,
       category TEXT DEFAULT 'general',
       asset TEXT DEFAULT 'global',
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS signals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      strategy_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      entry REAL,
+      stop_loss REAL,
+      take_profit REAL,
+      rr REAL,
+      rr_min REAL,
+      confluences TEXT DEFAULT '[]',
+      confirmed_steps TEXT DEFAULT '[]',
+      audit_json TEXT DEFAULT '{}',
+      payload_json TEXT DEFAULT '{}',
+      alerted INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -166,9 +185,13 @@ export async function initDB() {
   if (!prinColNames.includes("asset")) {
     await db.execute("ALTER TABLE principles ADD COLUMN asset TEXT DEFAULT 'global'");
   }
+  if (!prinColNames.includes("active")) {
+    await db.execute("ALTER TABLE principles ADD COLUMN active INTEGER DEFAULT 1");
+  }
 
   await seedSetups();
   await ensurePrinciples();
+  await deactivateLegacyChockPrinciple();
 }
 
 async function seedSetups() {
@@ -323,7 +346,7 @@ const PRINCIPLE_SEED: Array<[string, string, string, string]> = [
   ["Journal obrigatório em cada trade","Registo completo depois da execução — não durante o setup.","discipline","global"],
   ["Revisão semanal todo domingo","Journal semanal, ajustar metas.","discipline","global"],
   ["Elliott + Wyckoff na revisão, não na entrada","Contagem e fases ficam no journal/domingo. Na sessão só gates SIM/NÃO.","strategy","global"],
-  ["Chock obrigatório para entrar","Sem Spring/UTAD nos M5/M2: sem entrada. Aplica-se a setups Wyckoff, não ao SMC 3-Step.","strategy","XAUUSD"],
+  ["Chock obrigatório para entrar","[LEGADO INATIVO] Sem Spring/UTAD nos M5/M2: sem entrada. Aplicava-se a setups Wyckoff. O playbook oficial XAUUSD (London Structure / ICT) NÃO exige Chock — mantido só para histórico.","strategy","XAUUSD"],
   ["XAUUSD: máximo 2 trades por dia","Após 2 trades em ouro, encerrar a sessão desse ativo.","discipline","XAUUSD"],
   ["XAUUSD: R:R mínimo 1:2","Até à liquidez oposta H1/M15. Abaixo de 2.0: rejeitar. Não forçar 3R em ouro.","risk","XAUUSD"],
   ["XAUUSD: drawdown diário máx 1.5%","Parar XAUUSD ao atingir 1.5% de DD no dia.","risk","XAUUSD"],
@@ -364,4 +387,29 @@ async function ensurePrinciples() {
   for (const [title, asset] of Object.entries(assetByTitle)) {
     await db.execute({ sql: "UPDATE principles SET asset=? WHERE title=? AND (asset IS NULL OR asset='' OR asset='global')", args: [asset, title] });
   }
+}
+
+/**
+ * Desativa o princípio "Chock obrigatório" associado a XAUUSD.
+ * Mantém o registo (legado inativo) — não apaga do histórico.
+ * O setup London Structure (ICT) não usa Chock; só W-E / E-W Wyckoff o usavam.
+ */
+async function deactivateLegacyChockPrinciple(): Promise<void> {
+  await db.execute({
+    sql: `UPDATE principles
+          SET active = 0,
+              body = CASE
+                WHEN body LIKE '%LEGADO INATIVO%' THEN body
+                ELSE '[LEGADO INATIVO] ' || body
+              END
+          WHERE title = 'Chock obrigatório para entrar'
+            AND (asset = 'XAUUSD' OR asset IS NULL OR asset = '' OR asset = 'global')`,
+  });
+  // Nota no setup London Structure: garantir que confluence/invalidation não listam Chock.
+  await db.execute({
+    sql: `UPDATE setups
+          SET confluence = REPLACE(REPLACE(confluence, ' + Chock M5', ''), 'Chock M5 + ', ''),
+              invalidation = REPLACE(REPLACE(invalidation, ' | Chock sem confirmação', ''), 'Chock sem confirmação | ', '')
+          WHERE name = 'XAUUSD — London Structure'`,
+  });
 }
