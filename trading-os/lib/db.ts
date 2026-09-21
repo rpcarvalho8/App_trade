@@ -118,6 +118,20 @@ export async function initDB() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS candle_cache (
+      symbol TEXT NOT NULL,
+      timeframe TEXT NOT NULL,
+      time INTEGER NOT NULL,
+      open REAL NOT NULL,
+      high REAL NOT NULL,
+      low REAL NOT NULL,
+      close REAL NOT NULL,
+      volume REAL DEFAULT 0,
+      source TEXT DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (symbol, timeframe, time)
+    );
+
     CREATE TABLE IF NOT EXISTS mental_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,

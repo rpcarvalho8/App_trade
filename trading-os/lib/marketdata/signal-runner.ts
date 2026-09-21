@@ -1,6 +1,9 @@
 /**
- * Liga o engine às streams XAU (xtb-client) e SOL (kraken-client).
+ * Liga o engine às streams XAU (xtb-client OHLC real) e SOL (kraken-client).
  * Avalia estratégias em cada tick / fecho de vela; emite alertas sem executar ordens.
+ *
+ * XAUUSD: só avalia confluences quando o backfill OHLC estiver completo (ready).
+ * Enquanto warming_up → /api/signals reporta status "warming_up".
  */
 import {
   STRATEGY_XAUUSD,
@@ -10,7 +13,13 @@ import {
   normalizeTf,
 } from "@/lib/strategies";
 import type { EngineContext, EngineState, Candle } from "@/lib/strategies/types";
-import { getXauBuffers, onXauTick, startXtbClient } from "@/lib/marketdata/xtb-client";
+import {
+  getXauBuffers,
+  onXauTick,
+  startXtbClient,
+  isXauReady,
+  getXauMarketStatus,
+} from "@/lib/marketdata/xtb-client";
 import { getSolBuffers, getSolSpread, onSolTick, startKrakenClient } from "@/lib/marketdata/kraken-client";
 import { emitSignalAlert } from "@/lib/signals";
 import { fetchCalendar } from "@/lib/morning-brief";
@@ -24,6 +33,7 @@ interface RunnerState {
   cooldownMs: number;
   newsBlackout: boolean;
   newsCheckedAt: number;
+  solReady: boolean;
 }
 
 function state(): RunnerState {
@@ -38,14 +48,13 @@ function state(): RunnerState {
       cooldownMs: Number(process.env.SIGNAL_COOLDOWN_MS || 120_000),
       newsBlackout: false,
       newsCheckedAt: 0,
+      solReady: false,
     } as RunnerState;
   }
   return g.__tosSignalRunner as RunnerState;
 }
 
 function londonSessionOk(now = new Date()): boolean {
-  // Europe/London approx via UTC: London cash ~07:00–16:00 UTC (inverno) / 06–15 (verão).
-  // Usamos 07:00–20:00 UTC para cobrir London + overlap NY.
   const h = now.getUTCHours();
   return h >= 7 && h < 20;
 }
@@ -79,7 +88,6 @@ async function refreshNewsBlackout(): Promise<boolean> {
       return keywords.some((k) => title.toUpperCase().includes(k.toUpperCase())) || e.country === "USD";
     });
   } catch {
-    // Em falha de calendário, não bloqueamos (false = limpo)
     s.newsBlackout = false;
   }
   return s.newsBlackout;
@@ -96,7 +104,6 @@ function mapBuffers(
       out[normalizeTf(to)] = snap[from];
     }
   }
-  // Também normaliza chaves existentes
   for (const k of Object.keys(snap)) {
     out[normalizeTf(k)] = snap[k];
   }
@@ -106,8 +113,11 @@ function mapBuffers(
 async function evalXau(price: number): Promise<void> {
   const s = state();
   const now = Date.now();
-  if (now - s.lastXauEval < 5_000) return; // throttle
+  if (now - s.lastXauEval < 5_000) return;
   s.lastXauEval = now;
+
+  // Gate: sem backfill completo não avalia confluences
+  if (!isXauReady()) return;
 
   const newsBlocked = await refreshNewsBlackout();
   const buffers = getXauBuffers().snapshot();
@@ -124,9 +134,6 @@ async function evalXau(price: number): Promise<void> {
   const result = evaluateStrategy(STRATEGY_XAUUSD, s.xau, ctx);
   s.xau = result.state;
   if (result.signal) {
-    if (s.xau.lastSignalAt && now - (s.xau.lastSignalAt || 0) < s.cooldownMs) {
-      // cooldown já aplicado via reset state lastSignalAt
-    }
     await emitSignalAlert(result.signal);
     s.xau.lastSignalAt = now;
   }
@@ -138,8 +145,14 @@ async function evalSol(price: number, spread?: number): Promise<void> {
   if (now - s.lastSolEval < 3_000) return;
   s.lastSolEval = now;
 
-  const newsBlocked = await refreshNewsBlackout();
   const buffers = getSolBuffers().snapshot();
+  const m15 = buffers["15m"] || [];
+  const m1 = buffers["1m"] || [];
+  // SOL ready quando tem histórico mínimo
+  s.solReady = m15.length >= 20 && m1.length >= 30;
+  if (!s.solReady) return;
+
+  const newsBlocked = await refreshNewsBlackout();
   const candlesByTf = mapBuffers(buffers, {
     "15m": "M15",
     "1m": "M1",
@@ -147,18 +160,16 @@ async function evalSol(price: number, spread?: number): Promise<void> {
     M1: "1m",
   });
 
-  // Liquidez oposta 15m como TP heurístico
-  const m15 = candlesByTf["15m"] || candlesByTf["M15"] || [];
   let takeProfitLevel: number | undefined;
   if (m15.length >= 5) {
     const recent = m15.slice(-10);
-    takeProfitLevel = Math.max(...recent.map((c) => c.high)); // ajustado no engine por direção
+    takeProfitLevel = Math.max(...recent.map((c) => c.high));
   }
 
   const ctx: EngineContext = {
     now,
     calendarClean: !newsBlocked,
-    sessionOk: nyPreferred(new Date(now)) || true, // preferred, não hard block
+    sessionOk: nyPreferred(new Date(now)) || true,
     price,
     spread: spread ?? getSolSpread() ?? undefined,
     takeProfitLevel,
@@ -173,7 +184,6 @@ async function evalSol(price: number, spread?: number): Promise<void> {
   }
 }
 
-/** Arranca streams + avaliação do motor (idempotente). */
 export function startSignalRunner(): void {
   const s = state();
   if (s.started) return;
@@ -193,17 +203,28 @@ export function startSignalRunner(): void {
   });
 
   console.log(
-    "[signal-runner] motor ligado a xtb-client (XAUUSD H4/M15/M5) e kraken-client (SOLUSD 15m/1m). Só alertas — sem execução automática."
+    "[signal-runner] motor ligado — XAU OHLC real (xAPI/TwelveData) + SOL Kraken. Só alertas."
   );
 }
 
 export function getRunnerDebug() {
   const s = state();
+  const xau = getXauMarketStatus();
   return {
     xauStep: s.xau.currentStepIndex,
     solStep: s.sol.currentStepIndex,
     xauConfirmed: s.xau.confirmed.length,
     solConfirmed: s.sol.confirmed.length,
     newsBlackout: s.newsBlackout,
+    xau,
+    solReady: s.solReady,
+    /** Estado agregado para /api/signals */
+    status: !xau.ready
+      ? xau.status === "error"
+        ? "error"
+        : "warming_up"
+      : s.solReady
+        ? "ready"
+        : "warming_up",
   };
 }

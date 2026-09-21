@@ -35,6 +35,7 @@ ALERT_THRESHOLD_SOL=0.8
 |--------|-----|-----------|
 | Overview | `/` | Dashboard: P&L, equity, por setup / par / sessão |
 | **Sessão** | `/sessao` | Mesa de Operação XAUUSD / SOLUSD — checklist sequencial |
+| **Sinais** | `/signals` | Motor de sinais (estado warm-up / beta XAU / lista) |
 | Morning Brief | `/morning-brief` | Resumo macro diário (Gemini + APIs gratuitas) |
 | Journal | `/journal` | Registo de trades (pré-preenchido a partir da sessão) |
 | Journal Semanal | `/weekly-journal` | Revisão semanal manual |
@@ -70,45 +71,49 @@ Usam **Google Gemini** (`GEMINI_API_KEY`), não Anthropic.
 
 O runner em `lib/marketdata/signal-runner.ts` avalia as estratégias JSON e grava em `signals` + alerta (WS/som/email). **Não envia ordens** à corretora.
 
+UI: [`/signals`](http://localhost:3000/signals) — XAUUSD com badge **BETA / OBSERVAÇÃO** até a fonte ser xAPI XTB verificada.
+
 ### Fontes de mercado — estado actual
 
 | | XAUUSD (`xtb-client.ts`) | SOLUSD (`kraken-client.ts`) |
 |--|--------------------------|-----------------------------|
-| **Fonte** | [gold-api.com](https://gold-api.com/) — spot XAU | Kraken public REST + WS |
-| **Endpoint preço** | `GET https://api.gold-api.com/price/XAU` (sem auth) | `GET https://api.kraken.com/0/public/Ticker?pair=SOLUSD` + `wss://ws.kraken.com` ticker `SOL/USD` |
-| **Gratuita?** | Sim (docs: real-time sem rate limit; histórico/OHLC free capped ~10/h — **não usamos OHLC desta API**) | Sim (API pública Kraken) |
-| **Latência típica** | ~300–400 ms RTT neste ambiente cloud (poll); docs afirmam resposta “instant” em memória | REST OHLC/Ticker tipicamente &lt;1 s; WS quase tempo-real |
-| **Poll** | Default `XAU_POLL_MS=15000` | Default `SOL_POLL_MS=10000` (+ WS se `SOL_USE_WS≠0`) |
-| **Comparado com XTB?** | **Não.** Não há calibração automática vs cotação xStation. O nome `xtb-client` é só convenção do playbook (execução manual na XTB). Spot gold-api ≠ CFDs XTB (spread/offset). | N/A (fonte = exchange Kraken) |
+| **Fonte primária** | **XTB xAPI** WebSocket — `getChartLastRequest` + stream `getCandles` ([docs](http://developers.xstore.pro/documentation/)) | Kraken public REST + WS |
+| **Endpoints** | `wss://ws.xtb.com/{demo\|real}` + `{demo\|real}Stream` | `api.kraken.com` + `wss://ws.kraken.com` |
+| **Credenciais** | `XTB_LOGIN`, `XTB_PASSWORD`, `XTB_ACCOUNT_TYPE=demo\|real`, `XTB_SYMBOL=GOLD` | Nenhuma (público) |
+| **Fallback OHLC** | **Twelve Data** `time_series` `XAU/USD` (`TWELVE_DATA_API_KEY`) — nunca spot único | — |
+| **Sintético / gold-api?** | **Removido.** Já não se sintetizam mechas a partir de um preço pontual. | — |
+| **Comparado com XTB?** | Parser validado com fixture RATE_INFO + amostra GOLD M15; teste live opcional se houver creds (`npm test`) | N/A |
 
-### Backfill de candles ao arrancar
+### Backfill e warm-up
 
-| Cliente | Comportamento |
-|---------|----------------|
-| **XAU** | **Sem OHLC histórico real.** No primeiro tick com preço, chama `seedSyntheticHistory(price)` (~80 barras **sintéticas** por TF H4/M15/M5). Depois agrega ticks de poll nos buffers. Até ao 1.º preço bem-sucedido os buffers estão vazios. |
-| **SOL** | **Sim — backfill REST real.** `seedSolHistory()` chama `OHLC?pair=SOLUSD&interval=15|1` e faz `buffer.seed(candles)` para `15m` e `1m` **antes** de depender só do stream. Se o seed falhar, os buffers ficam vazios até chegarem ticks. |
+1. Carrega `candle_cache` (SQLite) se existir.
+2. Backfill OHLC real: H4 (~30 dias), M15 (~5 dias), M5 (~1 dia) via xAPI ou TwelveData.
+3. Enquanto incompleto: `GET /api/signals` → `status: "warming_up"` e o **engine não avalia** confluences XAU.
+4. Mínimos: H4≥80, M15≥200, M5≥100 barras.
 
-### Queda de ligação / restart do processo
+### Persistência de candles
 
-| Cenário | Comportamento |
-|---------|----------------|
-| **XAU poll falha** | O intervalo continua; essa leitura é ignorada (`null`). Não há WS a “reconectar”. Buffer em memória **mantém-se** enquanto o processo Node viver. |
-| **Kraken WS fecha** | Reconnect automático após **5 s** (`connectWs` no `close`). O **buffer em memória mantém-se** (não é limpo no reconnect). O poll REST continua em paralelo. |
-| **Restart da app (`npm run dev` / novo processo)** | Buffers **perdem-se** (vivem em `globalThis`). XAU volta a seed sintético no 1.º preço; SOL volta a fazer backfill REST OHLC. Estado do engine (passo actual da sequência) também reinicia. |
+Tabela `candle_cache` em `trading.db` — restart **não** perde o histórico já carregado (evita backfill completo sempre).
+
+### Queda de ligação
+
+- xAPI stream: reconnect ~8 s; buffer + cache DB mantêm-se.
+- TwelveData: poll periódico de `time_series` (OHLC), não spot.
+- Restart do processo: rehidrata a partir de `candle_cache`, depois refresca a fonte live.
 
 ### Persistência de `signals`
 
-Registos em **SQLite** (`trading-os/trading.db`, tabela `signals` via `@libsql/client`). **Sobrevivem a restart** da app. Não são só memória. Buffer WS de toasts recentes é que é in-memory (máx. ~30 alertas).
-
-Consulta: `GET /api/signals`.
+SQLite (`signals`) — sobrevivem a restart. Consulta: `GET /api/signals` ou página `/signals`.
 
 Email opcional: `ALERT_EMAIL_TO` + `RESEND_API_KEY` ou `ALERT_EMAIL_WEBHOOK`.
+
+Ver também `trading-os/.env.example`.
 
 ---
 
 ## 🗄️ Base de Dados
 
-SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**. Inclui tabela `signals` do motor.
+SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**. Inclui tabelas `signals` e `candle_cache`.
 
 **Backup:**
 
@@ -128,8 +133,8 @@ npm run db:backup
 - **LibSQL** — SQLite local
 - **Recharts** — gráficos
 - **Gemini API** — brief e coach
-- **WebSocket** — alertas preço / calendário / **sinais** (porta 3001)
-- **Vitest** — detectors + engine (`npm test`)
+- **WebSocket** — alertas preço / calendário / **sinais** (porta 3001) + XTB xAPI
+- **Vitest** — detectors + engine + parser OHLC (`npm test`)
 
 ---
 
@@ -140,8 +145,8 @@ npm run db:backup
 - [x] Alertas in-app (preço + calendário)
 - [x] Mesa de Operação XAUUSD / SOLUSD
 - [x] Motor de sinais alert-only (XAU London Structure + SOL SMC 3-Step)
-- [ ] Backfill OHLC real para XAU (hoje: histórico sintético)
-- [ ] Calibração gold-api vs cotação XTB (spread/offset)
+- [x] OHLC real XAU (xAPI / TwelveData) + cache + warm-up (XAU ainda **beta** na UI)
+- [ ] Calibração tick-a-tick gold/XTB em produção (tirar badge beta)
 - [ ] Módulo Prop Firms
 - [ ] Export PDF de relatório mensal
 - [ ] Alertas email/Telegram (email parcial via env)
