@@ -35,6 +35,7 @@ ALERT_THRESHOLD_SOL=0.8
 |--------|-----|-----------|
 | Overview | `/` | Dashboard: P&L, equity, por setup / par / sessão |
 | **Sessão** | `/sessao` | Mesa de Operação XAUUSD / SOLUSD — checklist sequencial |
+| **Sinais** | `/signals` | Motor de sinais (estado warm-up / beta XAU / lista) |
 | Morning Brief | `/morning-brief` | Resumo macro diário (Gemini + APIs gratuitas) |
 | Journal | `/journal` | Registo de trades (pré-preenchido a partir da sessão) |
 | Journal Semanal | `/weekly-journal` | Revisão semanal manual |
@@ -66,9 +67,51 @@ Usam **Google Gemini** (`GEMINI_API_KEY`), não Anthropic.
 
 ---
 
+## 📡 Motor de Sinais (alert-only)
+
+O runner em `lib/marketdata/signal-runner.ts` avalia as estratégias JSON e grava em `signals` + alerta (WS/som/email). **Não envia ordens** à corretora.
+
+UI: [`/signals`](http://localhost:3000/signals) — XAUUSD com badge **BETA / OBSERVAÇÃO** (Twelve Data ≠ feed da corretora).
+
+### Fontes de mercado — estado actual
+
+| | XAUUSD (`xtb-client.ts`) | SOLUSD (`kraken-client.ts`) |
+|--|--------------------------|-----------------------------|
+| **Fonte primária** | **Twelve Data** `time_series` `XAU/USD` (`TWELVE_DATA_API_KEY`) | Kraken public REST + WS |
+| **XTB xAPI** | **Descontinuada 14/03/2025** (ws.xtb.com / xapi.xtb.com) — dead code em `xtb-xapi.dead.ts` | — |
+| **Plano free TD** | Basic: **8 créditos/min · 800/dia**; poll fecho-alinhado ≈ **393/dia (24h)** ou **~133/dia (8h London/NY)** — margem confortável | — |
+| **Sintético / gold-api?** | **Removido.** | — |
+| **vs XTB xStation** | Agregador de mercado — **possível divergência de spread**; entrada manual | N/A |
+
+### Backfill e warm-up
+
+1. Carrega `candle_cache` (SQLite) se existir.
+2. Backfill OHLC real Twelve Data: H4 (~30 dias), M15 (~5 dias), M5 (~1 dia).
+3. Enquanto incompleto: `GET /api/signals` → `status: "warming_up"`; o **engine não avalia** confluences XAU.
+4. Mínimos: H4≥80, M15≥200, M5≥100 barras.
+
+### Persistência de candles
+
+Tabela `candle_cache` em `trading.db` — restart **não** perde o histórico já carregado.
+
+### Queda de ligação
+
+- Twelve Data: poll periódico de `time_series` (OHLC), staggered por TF.
+- Restart: rehidrata a partir de `candle_cache`, depois refresca Twelve Data.
+
+### Persistência de `signals`
+
+SQLite (`signals`) — sobrevivem a restart. Consulta: `GET /api/signals` ou página `/signals`.
+
+Email opcional: `ALERT_EMAIL_TO` + `RESEND_API_KEY` ou `ALERT_EMAIL_WEBHOOK`.
+
+Ver também `trading-os/.env.example` (`TWELVE_DATA_API_KEY` obrigatória para XAU).
+
+---
+
 ## 🗄️ Base de Dados
 
-SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**.
+SQLite local — `trading-os/trading.db`. Setups e princípios são seedados; **edições a setups existentes não são sobrescritas**. Inclui tabelas `signals` e `candle_cache`.
 
 **Backup:**
 
@@ -88,7 +131,8 @@ npm run db:backup
 - **LibSQL** — SQLite local
 - **Recharts** — gráficos
 - **Gemini API** — brief e coach
-- **WebSocket** — alertas de preço / calendário (porta 3001)
+- **WebSocket** — alertas preço / calendário / **sinais** (porta 3001)
+- **Vitest** — detectors + engine + parser OHLC (`npm test`)
 
 ---
 
@@ -98,7 +142,10 @@ npm run db:backup
 - [x] Screenshot upload
 - [x] Alertas in-app (preço + calendário)
 - [x] Mesa de Operação XAUUSD / SOLUSD
+- [x] Motor de sinais alert-only (XAU London Structure + SOL SMC 3-Step)
+- [x] OHLC real XAU via Twelve Data + cache + warm-up (xAPI XTB descontinuada; badge **beta**)
+- [ ] Fonte OHLC alinhada à corretora (se surgir API) / calibração de spread
 - [ ] Módulo Prop Firms
 - [ ] Export PDF de relatório mensal
-- [ ] Alertas email/Telegram
+- [ ] Alertas email/Telegram (email parcial via env)
 - [ ] Backtesting de setups

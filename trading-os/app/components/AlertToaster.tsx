@@ -3,12 +3,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 interface MarketAlert {
   id: string;
-  type: "price" | "calendar";
+  type: "price" | "calendar" | "signal";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;
   message: string;
   ts: number;
+  meta?: Record<string, unknown>;
 }
 
 const LEVEL_STYLE: Record<string, { border: string; bg: string; accent: string }> = {
@@ -18,6 +19,38 @@ const LEVEL_STYLE: Record<string, { border: string; bg: string; accent: string }
 };
 
 const AUTO_DISMISS_MS = 12000;
+
+/** Beep curto via Web Audio API (sem ficheiro externo). */
+function playAlertSound(kind: MarketAlert["type"]) {
+  try {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const now = ctx.currentTime;
+    const tones =
+      kind === "signal"
+        ? [880, 1174, 880]
+        : kind === "calendar"
+          ? [660, 520]
+          : [740];
+    tones.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + i * 0.12 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.12);
+      osc.stop(now + i * 0.12 + 0.16);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 800);
+  } catch {
+    // autoplay policies / browsers sem AudioContext
+  }
+}
 
 export default function AlertToaster() {
   const [toasts, setToasts] = useState<MarketAlert[]>([]);
@@ -30,9 +63,12 @@ export default function AlertToaster() {
     if (seen.current.has(a.id)) return;
     seen.current.add(a.id);
     setToasts((prev) => [a, ...prev].slice(0, 5));
+    if (a.type === "signal" || a.level === "critical") {
+      playAlertSound(a.type);
+    }
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== a.id));
-    }, AUTO_DISMISS_MS);
+    }, a.type === "signal" ? 20000 : AUTO_DISMISS_MS);
   }, []);
 
   const dismiss = useCallback((id: string) => {
@@ -71,7 +107,6 @@ export default function AlertToaster() {
           if (data.kind === "alert" && data.alert) {
             pushToast(data.alert as MarketAlert);
           } else if (data.kind === "hello" && Array.isArray(data.recent)) {
-            // não faz "spam" de toasts antigos: marca-os como vistos.
             for (const a of data.recent as MarketAlert[]) seen.current.add(a.id);
           }
         } catch {}
@@ -113,7 +148,6 @@ export default function AlertToaster() {
         pointerEvents: "none",
       }}
     >
-      {/* indicador discreto de ligação */}
       <div style={{ alignSelf: "flex-end", pointerEvents: "none", display: "flex", alignItems: "center", gap: 5, opacity: 0.7 }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "#4ade80" : "#475569" }} />
         <span style={{ fontSize: 9, color: "#475569", letterSpacing: 0.5 }}>
@@ -123,6 +157,8 @@ export default function AlertToaster() {
 
       {toasts.map((t) => {
         const st = LEVEL_STYLE[t.level] || LEVEL_STYLE.info;
+        const typeLabel =
+          t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : "PREÇO";
         return (
           <div
             key={t.id}
@@ -148,7 +184,7 @@ export default function AlertToaster() {
             </div>
             <div style={{ color: "#cbd5e1", fontSize: 11.5, marginTop: 5, lineHeight: 1.45 }}>{t.message}</div>
             <div style={{ color: "#475569", fontSize: 9, marginTop: 6, display: "flex", justifyContent: "space-between" }}>
-              <span>{t.type === "calendar" ? "CALENDÁRIO" : "PREÇO"}{t.asset ? ` · ${t.asset}` : ""}</span>
+              <span>{typeLabel}{t.asset ? ` · ${t.asset}` : ""}</span>
               <span>{new Date(t.ts).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}</span>
             </div>
           </div>

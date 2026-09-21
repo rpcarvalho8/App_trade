@@ -154,9 +154,10 @@ export default function PrinciplesPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12, marginBottom: 16 }}>
               {items.map((p: any) => (
                 <div key={p.id} style={{
-                  background: C.card, borderLeft: `3px solid ${cat.color}`,
+                  background: C.card, borderLeft: `3px solid ${Number(p.active) === 0 ? C.muted : cat.color}`,
                   border: `1px solid ${C.border}`, borderLeftWidth: 3,
                   borderRadius: 8, padding: 16, position: "relative",
+                  opacity: Number(p.active) === 0 ? 0.55 : 1,
                 }}>
                   <button onClick={() => remove(p.id)} style={{
                     position: "absolute", top: 10, right: 10,
@@ -164,6 +165,11 @@ export default function PrinciplesPage() {
                   }}>✕</button>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 8, paddingRight: 20 }}>
                     {p.title}
+                    {Number(p.active) === 0 && (
+                      <span style={{ marginLeft: 8, fontSize: 9, color: C.muted, letterSpacing: 1, fontWeight: 500 }}>
+                        LEGADO INATIVO
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 9, color: (p.asset === "XAUUSD" ? C.amber : p.asset === "SOLUSD" ? "#c084fc" : C.muted), marginBottom: 6, letterSpacing: 1 }}>
                     {(p.asset || "global").toUpperCase()}

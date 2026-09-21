@@ -8,6 +8,7 @@ import AlertToaster from "./components/AlertToaster";
 const navItems = [
   { href:"/", label:"Overview", icon:"◈" },
   { href:"/sessao", label:"Sessão", icon:"▶" },
+  { href:"/signals", label:"Sinais", icon:"⚑" },
   { href:"/morning-brief", label:"Morning Brief", icon:"🌅" },
   { href:"/journal", label:"Journal", icon:"◉" },
   { href:"/weekly-journal", label:"Journal Semanal", icon:"📅" },

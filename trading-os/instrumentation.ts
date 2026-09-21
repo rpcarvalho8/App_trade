@@ -80,6 +80,16 @@ export async function register() {
     console.error("[Alerts] não foi possível arrancar o motor de alertas:", e?.message || e);
   }
 
+  // ---------- 4) Motor de sinais (XAUUSD + SOLUSD) — só alertas ----------
+  try {
+    const { initDB } = await import("@/lib/db");
+    await initDB();
+    const { startSignalRunner } = await import("@/lib/marketdata/signal-runner");
+    startSignalRunner();
+  } catch (e: any) {
+    console.error("[Signals] não foi possível arrancar o motor de sinais:", e?.message || e);
+  }
+
   // ---------- catch-up no arranque (só com chave) ----------
   // Brief primeiro (leve / cache). Coach depois em modo texto. Nunca bloqueia o boot.
   if (hasKey) {
