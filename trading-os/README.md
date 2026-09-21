@@ -1,36 +1,32 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Trading OS
 
-## Getting Started
+App Next.js — journal, Mesa de Operação (XAUUSD / SOLUSD), Morning Brief e AI Coach (Gemini).
 
-First, run the development server:
+Documentação do produto: ver [README na raiz do repositório](../README.md).
 
 ```bash
+npm install
+echo "GEMINI_API_KEY=..." > .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abre http://localhost:3000 e começa em **/sessao**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Gemini (AI Coach / Morning Brief)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+HTTP **503/429** = saturação temporária da Google (**não** é a chave). Journal, Mesa e alertas continuam.
 
-## Learn More
+Modelos por omissão (Set 2026):
 
-To learn more about Next.js, take a look at the following resources:
+```
+GEMINI_API_KEY=AIza...
+GEMINI_MODEL=gemini-3.6-flash
+GEMINI_FALLBACK_MODEL=gemini-3.1-flash-lite,gemini-flash-latest
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `gemini-2.0-flash` / `-lite` — **shut down** (não usar)
+- `gemini-2.5-flash` — shutdown ~16 Out 2026 (não usar como primário)
+- `gemini-3.6-flash` — multimodal (texto + imagens) — **primário**
+- Screenshots do Coach são comprimidos (JPEG ≤1280px) antes do envio
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Se o 503 continuar: espera 2–5 min e gera de novo em **/ai-coach**.

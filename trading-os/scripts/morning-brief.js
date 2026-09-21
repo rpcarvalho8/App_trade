@@ -28,7 +28,21 @@ const path = require("path");
 
 const ROOT = process.cwd();
 const OUT_DIR = path.join(ROOT, "reports", "morning-brief");
-const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODEL || "gemini-3.1-flash-lite,gemini-flash-latest")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const MODELS = (() => {
+  const seen = new Set();
+  const list = [];
+  for (const m of [MODEL, ...FALLBACK_MODELS]) {
+    if (!m || seen.has(m)) continue;
+    seen.add(m);
+    list.push(m);
+  }
+  return list;
+})();
 const ASSETS = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD", "SOLUSD"];
 const UA = "Mozilla/5.0 (compatible; TradingOS-MorningBrief/1.0)";
 
@@ -136,8 +150,9 @@ async function fetchCrypto() {
 }
 
 async function fetchYields() {
+  const year = new Date().getFullYear();
   const csv = await getText(
-    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv"
+    `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/${year}/all?type=daily_treasury_yield_curve&field_tdr_date_value=${year}&page&_format=csv`
   );
   const lines = csv.trim().split("\n");
   const header = lines[0].split(",").map((h) => h.replace(/"/g, "").trim());
@@ -161,34 +176,49 @@ async function fetchYields() {
 // ---------- Gemini ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function callGemini(prompt, attempt = 1) {
-  const MAX_ATTEMPTS = 5;
+async function callGemini(prompt, attempt = 1, modelIndex = 0) {
+  const ATTEMPTS_PER_MODEL = 4;
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY em falta no .env.local");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
+  const model = MODELS[modelIndex] || MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const generationConfig = {
+    temperature: 0.5,
+    maxOutputTokens: 8192,
+  };
+  if (modelIndex === 0) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.5,
-        maxOutputTokens: 8192,
-        // Devolvemos texto puro com delimitadores (Markdown é frágil em JSON).
-        // Desativa o "thinking" para todos os tokens irem para a resposta final.
-        thinkingConfig: { thinkingBudget: 0 },
-      },
+      generationConfig,
     }),
     signal: AbortSignal.timeout(90000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    // Retry com backoff em erros transitórios (sobrecarga / rate limit).
-    if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < MAX_ATTEMPTS) {
-      const wait = 3000 * attempt;
-      console.warn(`[MorningBrief] Gemini ${res.status}; retry ${attempt}/${MAX_ATTEMPTS - 1} em ${wait / 1000}s...`);
+    if (res.status === 404 && modelIndex + 1 < MODELS.length) {
+      console.warn(`[MorningBrief] modelo ${model} 404; a mudar para ${MODELS[modelIndex + 1]}…`);
+      return callGemini(prompt, 1, modelIndex + 1);
+    }
+    if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < ATTEMPTS_PER_MODEL) {
+      const wait = 1000 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 400);
+      console.warn(`[MorningBrief] ${model} ${res.status}; retry ${attempt}/${ATTEMPTS_PER_MODEL - 1} em ${Math.round(wait / 100) / 10}s...`);
       await sleep(wait);
-      return callGemini(prompt, attempt + 1);
+      return callGemini(prompt, attempt + 1, modelIndex);
+    }
+    if ((res.status === 503 || res.status === 429 || res.status >= 500) && modelIndex + 1 < MODELS.length) {
+      console.warn(`[MorningBrief] a mudar para ${MODELS[modelIndex + 1]}…`);
+      return callGemini(prompt, 1, modelIndex + 1);
+    }
+    if (res.status === 503 || res.status === 429) {
+      throw new Error(
+        `Serviço Gemini temporariamente indisponível (${res.status}). Não é a tua chave — espera 2–5 min.`
+      );
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`Autenticação Gemini falhou (${res.status}). Verifica GEMINI_API_KEY em .env.local.`);
     }
     throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 400)}`);
   }

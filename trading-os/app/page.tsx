@@ -55,8 +55,9 @@ export default function OverviewPage() {
           <div style={{fontSize:11,color:C.muted,marginTop:2}}>{new Date().toLocaleDateString("pt-PT",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
         </div>
         <div style={{display:"flex",gap:8}}>
+          <Link href="/sessao" style={{background:"#0f4c3a",color:C.accent,border:`1px solid ${C.accent}`,padding:"6px 14px",borderRadius:4,textDecoration:"none",fontSize:11}}>▶ Abrir sessão</Link>
           <Link href="/ai-coach" style={{background:C.card,color:C.accent,border:"1px solid #1e4d6b",padding:"6px 14px",borderRadius:4,textDecoration:"none",fontSize:11}}>⬡ Análise AI</Link>
-          <Link href="/journal" style={{background:"#0f4c3a",color:C.accent,border:`1px solid ${C.accent}`,padding:"6px 14px",borderRadius:4,textDecoration:"none",fontSize:11}}>+ Registar Trade</Link>
+          <Link href="/journal" style={{background:C.card,color:C.secondary,border:`1px solid ${C.border}`,padding:"6px 14px",borderRadius:4,textDecoration:"none",fontSize:11}}>+ Registar Trade</Link>
         </div>
       </div>
 
@@ -140,7 +141,23 @@ export default function OverviewPage() {
       </div>
 
       {/* Session + Mental + Recent */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:16}}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>P&L POR ATIVO</div>
+          {(stats.byPair||[]).length===0 && <div style={{color:C.muted,fontSize:11}}>Sem dados</div>}
+          {(stats.byPair||[]).slice(0,8).map((s: any)=>{
+            const wr=s.total>0?Math.round((s.wins/s.total)*100):0;
+            return (
+              <div key={s.pair} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${C.border}`,fontSize:11}}>
+                <span style={{color:C.secondary}}>{s.pair}</span>
+                <span style={{color:C.muted}}>{s.total}</span>
+                <span style={{color:wr>=55?C.green:wr>=40?C.amber:C.red}}>{wr}%</span>
+                <span style={{color:Number(s.pnl)>=0?C.green:C.red,fontWeight:500}}>${Number(s.pnl).toFixed(0)}</span>
+              </div>
+            );
+          })}
+        </div>
+
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
           <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>P&L POR SESSÃO</div>
           {(stats.bySession||[]).length===0 && <div style={{color:C.muted,fontSize:11}}>Sem dados</div>}

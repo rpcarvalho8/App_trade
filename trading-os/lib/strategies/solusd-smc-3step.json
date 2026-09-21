@@ -1,0 +1,53 @@
+{
+  "id": "solusd-smc-3step",
+  "symbol": "SOLUSD",
+  "name": "SMC 3-Step Scalping",
+  "category": "SMC",
+  "timeframes": {
+    "bias": "15m",
+    "entry": "1m"
+  },
+  "session": {
+    "preferred": ["ny"],
+    "avoidIf": "asia_low_liquidity",
+    "maxCandlesAfterSweep": 30,
+    "maxCandlesAfterStep1ForChoCH": 20
+  },
+  "sequence": [
+    { "step": 1, "type": "liquidity_sweep", "params": { "timeframe": "15m", "maxDeviationPct": 0.2 } },
+    { "step": 2, "type": "choch_volume", "params": { "timeframe": "1m", "volumeMultiple": 1.5, "volumeLookback": 20, "maxCandles": 20 } },
+    { "step": 3, "type": "fvg_golden_ratio", "params": { "timeframe": "1m", "fibZone": [0.618, 0.786], "minFvgPct": 0.10 } }
+  ],
+  "confluences": [
+    "sweep_15m",
+    "choch_volume_spike_1m",
+    "fvg_618_786",
+    "rr_min_3",
+    "spread_below_50pct_fvg",
+    "sequence_1_2_3_no_skip"
+  ],
+  "invalidation": [
+    "no_clear_sweep",
+    "choch_no_volume",
+    "fvg_out_of_zone_or_too_small",
+    "rr_below_3",
+    "extreme_volatility_or_wide_spread",
+    "news_30min",
+    "daily_dd_3pct"
+  ],
+  "risk": {
+    "normalPct": 1.0,
+    "reducedPct": 0.5,
+    "slAggressive": { "condition": "fvg_gt_0.15pct", "offset": "1_tick_beyond_fvg" },
+    "slConservative": "1_tick_beyond_choch_impulse_extreme",
+    "tpLogic": "50pct_at_1:2_to_BE_rest_at_1:3_or_liquidity_15m",
+    "rrMin": 3.0
+  },
+  "kill": {
+    "consecutiveLosses": 2,
+    "pauseMinutes": 30,
+    "maxTradesPerDay": 3,
+    "maxDailyDrawdownPct": 3.0,
+    "blockIf": { "mentalNote": "D" }
+  }
+}

@@ -14,9 +14,10 @@
 import fs from "fs";
 import path from "path";
 
+import { generateContent, geminiResponseText, PRIMARY_MODEL } from "@/lib/gemini";
+
 const ROOT = process.cwd();
 export const OUT_DIR = path.join(ROOT, "reports", "morning-brief");
-const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const UA = "Mozilla/5.0 (compatible; TradingOS-MorningBrief/1.0)";
 
 export const ASSETS = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD", "SOLUSD"] as const;
@@ -119,8 +120,9 @@ async function fetchCrypto() {
 }
 
 async function fetchYields() {
+  const year = new Date().getFullYear();
   const csv = await getText(
-    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv"
+    `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/${year}/all?type=daily_treasury_yield_curve&field_tdr_date_value=${year}&page&_format=csv`
   );
   const lines = csv.trim().split("\n");
   const header = lines[0].split(",").map((h) => h.replace(/"/g, "").trim());
@@ -142,44 +144,18 @@ async function fetchYields() {
 }
 
 // ---------- Gemini ----------
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function callGemini(prompt: string, attempt = 1): Promise<string> {
-  const MAX_ATTEMPTS = 5;
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY em falta no .env.local");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.5,
-        maxOutputTokens: 8192,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    }),
-    signal: AbortSignal.timeout(90000),
+async function callGemini(prompt: string): Promise<string> {
+  const json = await generateContent({
+    parts: [{ text: prompt }],
+    logLabel: "MorningBrief",
+    timeoutMs: 90_000,
+    generationConfig: {
+      temperature: 0.5,
+      maxOutputTokens: 8192,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < MAX_ATTEMPTS) {
-      const wait = 3000 * attempt;
-      console.warn(`[MorningBrief] Gemini ${res.status}; retry ${attempt}/${MAX_ATTEMPTS - 1} em ${wait / 1000}s...`);
-      await sleep(wait);
-      return callGemini(prompt, attempt + 1);
-    }
-    throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 400)}`);
-  }
-  const json: any = await res.json();
-  const cand = json?.candidates?.[0];
-  const text: string | undefined = cand?.content?.parts?.map((p: any) => p.text).filter(Boolean).join("");
-  if (!text) {
-    const reason = cand?.finishReason || json?.promptFeedback?.blockReason || "vazio";
-    throw new Error(`Gemini sem resposta (${reason})`);
-  }
-  return text;
+  return geminiResponseText(json);
 }
 
 function extractSection(text: string, name: string): string {
@@ -237,7 +213,7 @@ function assembleMarkdown(today: string, brief: { calendario_md: string; macro_m
   return `# 🌅 Morning Brief — ${today}
 
 > Ativos: XAUUSD · EURUSD · GBPUSD · BTCUSD · ETHUSD · SOLUSD
-> Gerado automaticamente às 06:00 (hora de Portugal). Análise por Gemini (${MODEL}).
+> Gerado automaticamente às 06:00 (hora de Portugal). Análise por Gemini (${PRIMARY_MODEL}).
 
 ## 📅 1. CALENDÁRIO ECONÓMICO DO DIA
 

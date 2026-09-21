@@ -7,6 +7,7 @@
  *   3. Motor de Alertas em tempo real + servidor WebSocket (porta 3001).
  *
  * Tudo só no runtime Node.js. A Gemini requer GEMINI_API_KEY em .env.local.
+ * Catch-up NÃO bloqueia o boot: corre em setTimeout + try/catch; falhas 503 ficam deferred.
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -22,11 +23,16 @@ export async function register() {
     try {
       const { ensurePreviousWeekReport } = await import("@/lib/weekly-analysis");
       const res = await ensurePreviousWeekReport();
-      console.log(
-        `[AI Coach] ${label}: ${res.generated ? "relatório gerado" : "já existia"} para a semana ${res.week_start}`
-      );
+      if (res.deferred) {
+        console.warn(`[AI Coach] ${label}: adiado (${res.reason}). Semana ${res.week_start}.`);
+      } else {
+        console.log(
+          `[AI Coach] ${label}: ${res.generated ? "relatório gerado (modo texto no catch-up)" : "já existia"} para a semana ${res.week_start}`
+        );
+      }
     } catch (e: any) {
-      console.error(`[AI Coach] ${label} falhou:`, e?.message || e);
+      // Nunca derruba o processo — retry manual em /ai-coach.
+      console.warn(`[AI Coach] ${label} falhou (app continua):`, e?.message || e);
     }
   };
 
@@ -35,14 +41,14 @@ export async function register() {
     try {
       const { ensureTodayBrief, generateBrief, todayISO } = await import("@/lib/morning-brief");
       if (label.startsWith("cron")) {
-        await generateBrief(todayISO()); // às 06:00 força a geração do dia.
+        await generateBrief(todayISO());
         console.log(`[MorningBrief] ${label}: brief do dia gerado.`);
       } else {
         const res = await ensureTodayBrief();
         console.log(`[MorningBrief] ${label}: ${res.generated ? "brief gerado" : "já existia"} (${res.date}).`);
       }
     } catch (e: any) {
-      console.error(`[MorningBrief] ${label} falhou:`, e?.message || e);
+      console.warn(`[MorningBrief] ${label} falhou (app continua):`, e?.message || e);
     }
   };
 
@@ -53,11 +59,9 @@ export async function register() {
   // ---------- crons ----------
   try {
     const cron = (await import("node-cron")).default;
-    // AI Coach: 09:00 todos os domingos.
     cron.schedule("0 9 * * 0", () => {
       if (process.env.GEMINI_API_KEY) runWeekly("cron domingo 9h");
     });
-    // Morning Brief: 06:00 todos os dias.
     cron.schedule("0 6 * * *", () => {
       if (process.env.GEMINI_API_KEY) runBrief("cron 06:00");
     });
@@ -76,9 +80,22 @@ export async function register() {
     console.error("[Alerts] não foi possível arrancar o motor de alertas:", e?.message || e);
   }
 
+  // ---------- 4) Motor de sinais (XAUUSD + SOLUSD) — só alertas ----------
+  try {
+    const { initDB } = await import("@/lib/db");
+    await initDB();
+    const { startSignalRunner } = await import("@/lib/marketdata/signal-runner");
+    startSignalRunner();
+  } catch (e: any) {
+    console.error("[Signals] não foi possível arrancar o motor de sinais:", e?.message || e);
+  }
+
   // ---------- catch-up no arranque (só com chave) ----------
+  // Brief primeiro (leve / cache). Coach depois em modo texto. Nunca bloqueia o boot.
   if (hasKey) {
-    setTimeout(() => runWeekly("catch-up no arranque"), 4000);
-    setTimeout(() => runBrief("catch-up no arranque"), 6000);
+    setTimeout(async () => {
+      await runBrief("catch-up no arranque");
+      await runWeekly("catch-up no arranque");
+    }, 5000);
   }
 }

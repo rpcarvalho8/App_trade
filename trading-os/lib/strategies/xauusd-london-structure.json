@@ -1,0 +1,54 @@
+{
+  "id": "xauusd-london-structure",
+  "symbol": "XAUUSD",
+  "name": "London Structure",
+  "category": "ICT",
+  "timeframes": {
+    "bias": "H4",
+    "trigger": "M15",
+    "entry": "M5"
+  },
+  "session": {
+    "allowed": ["london", "london_ny_overlap"],
+    "newsBlackoutMinutes": 30,
+    "newsImpact": ["NFP", "CPI", "FOMC", "Powell"]
+  },
+  "sequence": [
+    { "step": 1, "type": "calendar_clean", "params": { "blackoutMin": 30 } },
+    { "step": 2, "type": "bias_h4", "params": { "requireSingleDirection": true, "rejectIf": "range_or_phaseB" } },
+    { "step": 3, "type": "liquidity_sweep", "params": { "timeframe": "M15", "requireCloseBackInside": true } },
+    { "step": 4, "type": "mss_cisd", "params": { "timeframe": "M15", "alignWithBias": true } },
+    { "step": 5, "type": "ob_or_fvg", "params": { "timeframe": "M5", "slBeyond": "sweep_extreme_M15" } }
+  ],
+  "confluences": [
+    "bias_h4_clear",
+    "sweep_m15",
+    "mss_cisd_aligned",
+    "ob_fvg_m5",
+    "rr_min_2",
+    "session_window",
+    "no_news_30min"
+  ],
+  "invalidation": [
+    "close_through_entry_zone",
+    "strong_us_news",
+    "h4_bias_flip",
+    "rr_below_2"
+  ],
+  "risk": {
+    "normalPct": 1.0,
+    "reducedPct": 0.5,
+    "reduceIfMentalScoreBelow": 5,
+    "slLogic": "beyond_sweep_extreme_m15",
+    "tpLogic": "next_opposing_high_low_m15_h1",
+    "rrMin": 2.0,
+    "partialAt1R": { "closePct": 50, "moveSlToBE": true }
+  },
+  "kill": {
+    "consecutiveLosses": 2,
+    "pauseMinutes": 30,
+    "maxTradesPerDay": 2,
+    "maxDailyDrawdownPct": 1.5,
+    "blockIf": { "mentalNote": "D", "sleepHours": 6, "stressAbove": 7 }
+  }
+}
