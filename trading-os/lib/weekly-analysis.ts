@@ -21,8 +21,8 @@ export function previousWeekRange(now = new Date()): { week_start: string; week_
   return weekRangeOf(lastWeek);
 }
 
-// Limit how many images we send to keep payloads reasonable on the free tier.
-const MAX_IMAGES = 45;
+// Limit screenshots to keep free-tier payloads under control (compressed JPEG via sharp).
+const MAX_IMAGES = 12;
 
 const SHOT_LABELS: Record<string, string> = {
   screenshot_before: "ANTES",
@@ -37,7 +37,7 @@ function num(v: any, d = 0): number {
 
 function isOverloadError(e: any): boolean {
   const msg = String(e?.message || e || "");
-  return /503|429|sobrecarreg/i.test(msg);
+  return /503|429|sobrecarreg|indispon|UNAVAILABLE/i.test(msg);
 }
 
 export interface WeeklyResult {
@@ -120,7 +120,7 @@ export async function generateWeeklyReport(
   const visionNote =
     imageCap <= 0
       ? "Nesta execução NÃO recebes screenshots (modo texto — a API estava saturada ou o catch-up pediu leve). Analisa só números e notas; deixa screenshot_analysis vazio ou genérico."
-      : "Recebes também SCREENSHOTS dos gráficos (antes/entrada/depois) e DEVES analisá-los visualmente.";
+      : "Recebes SCREENSHOTS prioritários da ENTRADA (e before/after se couber no limite). Analisa-os visualmente.";
 
   const intro = `És um coach de trading de elite (Wyckoff, Elliott Wave, ICT/SMC e psicologia de trading).
 Vais analisar a SEMANA de ${week_start} a ${week_end} de um trader.
@@ -138,18 +138,31 @@ A seguir vêm os trades da semana, um a um.`;
     parts.push({
       text: `\n=== TRADE #${t.id} | ${t.date} | ${t.pair} ${t.direction} | setup: ${t.setup} | resultado: ${t.outcome} | pnl: ${t.pnl} ===\nDADOS: ${JSON.stringify(t)}`,
     });
-    if (imageCap <= 0) continue;
-    for (const field of ["screenshot_before", "screenshot_entry", "screenshot_after"]) {
-      if (imagesSent >= imageCap) continue;
-      const orig = trades.find((x) => x.id === t.id);
-      const realUrl = orig ? orig[field] : "";
-      if (!realUrl) continue;
-      const img = await imagePartFromUrl(realUrl);
-      if (img) {
-        parts.push({ text: `Screenshot ${SHOT_LABELS[field]} do trade #${t.id}:` });
-        parts.push(img);
-        imagesSent++;
+  }
+
+  // Screenshots after all trade text: entry first (highest signal), then before/after.
+  if (imageCap > 0) {
+    const imagePasses = [
+      ["screenshot_entry"] as const,
+      ["screenshot_before", "screenshot_after"] as const,
+    ];
+    for (const fields of imagePasses) {
+      for (const t of tradeSummaries) {
+        for (const field of fields) {
+          if (imagesSent >= imageCap) break;
+          const orig = trades.find((x) => x.id === t.id);
+          const realUrl = orig ? orig[field] : "";
+          if (!realUrl) continue;
+          const img = await imagePartFromUrl(realUrl);
+          if (img) {
+            parts.push({ text: `Screenshot ${SHOT_LABELS[field]} do trade #${t.id}:` });
+            parts.push(img);
+            imagesSent++;
+          }
+        }
+        if (imagesSent >= imageCap) break;
       }
+      if (imagesSent >= imageCap) break;
     }
   }
 

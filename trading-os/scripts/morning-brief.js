@@ -28,8 +28,8 @@ const path = require("path");
 
 const ROOT = process.cwd();
 const OUT_DIR = path.join(ROOT, "reports", "morning-brief");
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODEL || "gemini-2.0-flash-lite,gemini-1.5-flash,gemini-flash-latest")
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODEL || "gemini-3.1-flash-lite,gemini-flash-latest")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -177,7 +177,7 @@ async function fetchYields() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function callGemini(prompt, attempt = 1, modelIndex = 0) {
-  const ATTEMPTS_PER_MODEL = 2;
+  const ATTEMPTS_PER_MODEL = 4;
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY em falta no .env.local");
   const model = MODELS[modelIndex] || MODEL;
@@ -198,9 +198,13 @@ async function callGemini(prompt, attempt = 1, modelIndex = 0) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    if (res.status === 404 && modelIndex + 1 < MODELS.length) {
+      console.warn(`[MorningBrief] modelo ${model} 404; a mudar para ${MODELS[modelIndex + 1]}…`);
+      return callGemini(prompt, 1, modelIndex + 1);
+    }
     if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < ATTEMPTS_PER_MODEL) {
-      const wait = 2000 * attempt;
-      console.warn(`[MorningBrief] ${model} ${res.status}; retry ${attempt}/${ATTEMPTS_PER_MODEL - 1} em ${wait / 1000}s...`);
+      const wait = 1000 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 400);
+      console.warn(`[MorningBrief] ${model} ${res.status}; retry ${attempt}/${ATTEMPTS_PER_MODEL - 1} em ${Math.round(wait / 100) / 10}s...`);
       await sleep(wait);
       return callGemini(prompt, attempt + 1, modelIndex);
     }
@@ -210,8 +214,11 @@ async function callGemini(prompt, attempt = 1, modelIndex = 0) {
     }
     if (res.status === 503 || res.status === 429) {
       throw new Error(
-        `Gemini sobrecarregada (${res.status}). Não é a tua chave — espera 2–5 min. ${body.slice(0, 200)}`
+        `Serviço Gemini temporariamente indisponível (${res.status}). Não é a tua chave — espera 2–5 min.`
       );
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`Autenticação Gemini falhou (${res.status}). Verifica GEMINI_API_KEY em .env.local.`);
     }
     throw new Error(`Gemini HTTP ${res.status}: ${body.slice(0, 400)}`);
   }

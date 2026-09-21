@@ -71,9 +71,13 @@ export default function MorningBriefPage() {
         <div style={{ background: "#2a1215", border: "1px solid #7f1d1d", color: "#fca5a5", padding: 14, borderRadius: 6, fontSize: 12 }}>
           <strong>Erro:</strong> {error}
           <div style={{ color: "#94a3b8", marginTop: 6 }}>
-            {/503|429|sobrecarreg|indispon/i.test(error)
-              ? "A Google Gemini está saturada (não é a chave). Espera uns minutos e recarrega esta página."
-              : <>Verifica <code>GEMINI_API_KEY</code> em <code>.env.local</code> se o erro falar em chave em falta.</>}
+            {/503|429|sobrecarreg|indispon|UNAVAILABLE/i.test(error)
+              ? "Serviço Gemini temporariamente indisponível (não é a chave). Espera uns minutos e recarrega."
+              : /401|403|GEMINI_API_KEY|Autenticação|chave em falta/i.test(error)
+              ? <>Verifica <code>GEMINI_API_KEY</code> em <code>.env.local</code>.</>
+              : /404|Modelo Gemini|descontinu/i.test(error)
+              ? <>Actualiza <code>GEMINI_MODEL=gemini-3.6-flash</code> no .env.local.</>
+              : null}
           </div>
         </div>
       )}

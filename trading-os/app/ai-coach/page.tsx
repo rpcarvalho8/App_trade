@@ -107,11 +107,13 @@ export default function AICoachPage() {
         <div style={{ background:"#3b0f0f",border:"1px solid #7f1d1d",borderRadius:8,padding:14,color:C.red,fontSize:12 }}>
           ⚠ {err}
           <div style={{ marginTop:6,fontSize:10,color:"#f87171aa" }}>
-            {/503|429|sobrecarreg/i.test(err)
-              ? "Isto é saturação temporária da Google (não a tua chave). Espera 2–5 min e clica outra vez em Gerar. Journal e Mesa continuam a funcionar."
-              : /GEMINI_API_KEY|chave/i.test(err)
+            {/503|429|sobrecarreg|indispon|UNAVAILABLE/i.test(err)
+              ? "Serviço temporariamente indisponível (não é a tua chave). Espera 2–5 min e clica outra vez em Gerar. Journal e Mesa continuam."
+              : /401|403|GEMINI_API_KEY|Autenticação|chave/i.test(err)
               ? <>Verifica <code>GEMINI_API_KEY</code> no .env.local (aistudio.google.com/apikey).</>
-              : "Se o erro persistir, reinicia o npm run dev depois de um git pull."}
+              : /404|Modelo Gemini não encontrado|descontinu/i.test(err)
+              ? <>Modelo descontinuado ou incorrecto. No .env.local usa <code>GEMINI_MODEL=gemini-3.6-flash</code>.</>
+              : "Se o erro persistir, faz git pull e reinicia o npm run dev."}
           </div>
         </div>
       )}
