@@ -155,6 +155,8 @@ export interface EngineContext {
   price?: number;
   /** Nível de TP sugerido (liquidez oposta). */
   takeProfitLevel?: number;
+  /** TP por direcção (liquidez acima para long, abaixo para short). Usado quando takeProfitLevel não vem. */
+  takeProfitLevels?: { long?: number; short?: number };
   /** Nível de SL sugerido. */
   stopLossLevel?: number;
   /** Candles por timeframe (chave normalizada: H4, M15, M5, 15m, 1m). */

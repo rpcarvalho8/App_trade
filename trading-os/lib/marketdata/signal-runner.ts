@@ -160,10 +160,14 @@ async function evalSol(price: number, spread?: number): Promise<void> {
     M1: "1m",
   });
 
-  let takeProfitLevel: number | undefined;
+  // Liquidez oposta: máximo recente para long, mínimo recente para short.
+  let takeProfitLevels: EngineContext["takeProfitLevels"];
   if (m15.length >= 5) {
     const recent = m15.slice(-10);
-    takeProfitLevel = Math.max(...recent.map((c) => c.high));
+    takeProfitLevels = {
+      long: Math.max(...recent.map((c) => c.high)),
+      short: Math.min(...recent.map((c) => c.low)),
+    };
   }
 
   const ctx: EngineContext = {
@@ -172,7 +176,7 @@ async function evalSol(price: number, spread?: number): Promise<void> {
     sessionOk: nyPreferred(new Date(now)) || true,
     price,
     spread: spread ?? getSolSpread() ?? undefined,
-    takeProfitLevel,
+    takeProfitLevels,
     candlesByTf,
   };
 

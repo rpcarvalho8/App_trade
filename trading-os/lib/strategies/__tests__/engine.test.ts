@@ -222,4 +222,38 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
     });
     expect(r.signal).toBeNull();
   });
+
+  it("escolhe o TP do lado da direcção quando recebe os dois níveis", () => {
+    let state = createEngineState(STRATEGY_SOLUSD.id);
+    const m1Base = solChochPositive.slice(0, -1);
+    const ctxSweep: EngineContext = {
+      calendarClean: true,
+      sessionOk: true,
+      price: 150,
+      spread: 0.01,
+      stopLossLevel: 149,
+      takeProfitLevel: 153,
+      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+    };
+    let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
+    state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solChochPositive, M1: solChochPositive },
+    });
+    state = { ...r.state, sweepCandleIndex: solFvgPositive.length - 2 };
+    const long = (state.bias || "bearish") === "bullish";
+
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      bias: state.bias || "bearish",
+      price: 103.5,
+      stopLossLevel: long ? 102.5 : 104.5,
+      takeProfitLevel: undefined,
+      takeProfitLevels: { long: 107.5, short: 99.5 }, // R:R 4, não o TP por omissão a 3R
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solFvgPositive, M1: solFvgPositive },
+    });
+    expect(r.signal).not.toBeNull();
+    expect(r.signal!.takeProfit).toBe(long ? 107.5 : 99.5);
+  });
 });
