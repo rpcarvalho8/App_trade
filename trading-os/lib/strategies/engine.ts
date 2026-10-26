@@ -264,6 +264,8 @@ function buildSignal(
   // PE, SL e TP obrigatórios e do lado certo do preço — senão não há sinal.
   if (entry == null || sl == null || tp == null) return null;
   if (validateLevels(direction === "long" ? "LONG" : "SHORT", entry, sl, tp).length) return null;
+  const minStopPct = strategy.risk.minStopPct;
+  if (minStopPct != null && (Math.abs(entry - sl) / entry) * 100 < minStopPct) return null;
   const rr = calcRR(entry, sl, tp);
 
   // Gate R:R

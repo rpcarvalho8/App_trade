@@ -41,7 +41,8 @@
     "slAggressive": { "condition": "fvg_gt_0.15pct", "offset": "1_tick_beyond_fvg" },
     "slConservative": "1_tick_beyond_choch_impulse_extreme",
     "tpLogic": "50pct_at_1:2_to_BE_rest_at_1:3_or_liquidity_15m",
-    "rrMin": 3.0
+    "rrMin": 3.0,
+    "minStopPct": 0.3
   },
   "kill": {
     "consecutiveLosses": 2,

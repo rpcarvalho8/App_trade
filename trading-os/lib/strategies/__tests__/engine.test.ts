@@ -256,4 +256,37 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
     expect(r.signal).not.toBeNull();
     expect(r.signal!.takeProfit).toBe(long ? 107.5 : 99.5);
   });
+
+  it("não emite sinal SOL com SL abaixo da distância mínima (0,3%)", () => {
+    let state = createEngineState(STRATEGY_SOLUSD.id);
+    const m1Base = solChochPositive.slice(0, -1);
+    const ctxSweep: EngineContext = {
+      calendarClean: true,
+      sessionOk: true,
+      price: 150,
+      spread: 0.01,
+      stopLossLevel: 149,
+      takeProfitLevel: 153,
+      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+    };
+    let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
+    state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solChochPositive, M1: solChochPositive },
+    });
+    state = { ...r.state, sweepCandleIndex: solFvgPositive.length - 2 };
+    const long = (state.bias || "bearish") === "bullish";
+
+    // Caso real: SL a 0,02 da entrada → R:R 54, mas o stop é ruído.
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      bias: state.bias || "bearish",
+      price: 100.34,
+      stopLossLevel: long ? 100.32 : 100.36,
+      takeProfitLevel: long ? 101.43 : 99.25,
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solFvgPositive, M1: solFvgPositive },
+    });
+    expect(r.signal).toBeNull();
+  });
 });
