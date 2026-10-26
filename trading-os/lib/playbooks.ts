@@ -50,8 +50,8 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
     maxDailyDD: 1.5,
     pauseAfterLosses: 2,
     pauseMinutes: 30,
-    defaultRiskPct: 1,
-    reducedRiskPct: 0.5,
+    defaultRiskPct: 0.5,
+    reducedRiskPct: 0.25,
     steps: [
       {
         id: "news",
@@ -145,11 +145,11 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
     timeframes: "15 minutos = direcção · 1 minuto = viragem, gap e ordem",
     minRR: 3,
     maxTrades: 3,
-    maxDailyDD: 3,
+    maxDailyDD: 1.5,
     pauseAfterLosses: 2,
     pauseMinutes: 30,
-    defaultRiskPct: 1,
-    reducedRiskPct: 0.5,
+    defaultRiskPct: 0.5,
+    reducedRiskPct: 0.25,
     steps: [
       {
         id: "sweep",

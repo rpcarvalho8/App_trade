@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { JOURNAL_PAIRS, canonicalizePair, isSessionPair } from "@/lib/pairs";
+import { validateTrade } from "@/lib/risk";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",purple:"#c084fc",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
 
@@ -301,10 +302,10 @@ const blank = () => ({
   confluences:"", entry_reason:"", shock_type:"", shock_timeframe:"",
   management:"", lesson:"", notes:"",
   screenshot_before:"", screenshot_after:"", screenshot_entry:"", tags:"",
-  mental_state:"B", followed_plan:"1",
+  mental_state:"B", followed_plan:"",
   sleep_quality:"7", fatigue_level:"3", stress_level:"3", anxiety_level:"3",
   focus_level:"7", confidence_level:"6",
-  emotional_state:"Calmo e focado", pre_session_notes:"", post_trade_emotion:"",
+  emotional_state:"", pre_session_notes:"", post_trade_emotion:"",
 });
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
@@ -390,11 +391,11 @@ function JournalInner() {
       lesson:t.lesson||"", notes:t.notes||"",
       screenshot_before:t.screenshot_before||"", screenshot_after:t.screenshot_after||"",
       screenshot_entry:t.screenshot_entry||"", tags:t.tags||"",
-      mental_state:t.mental_state||"B", followed_plan:String(t.followed_plan??1),
+      mental_state:t.mental_state||"B", followed_plan:t.followed_plan==null?"":String(t.followed_plan),
       sleep_quality:String(t.sleep_quality||7), fatigue_level:String(t.fatigue_level||3),
       stress_level:String(t.stress_level||3), anxiety_level:String(t.anxiety_level||3),
       focus_level:String(t.focus_level||7), confidence_level:String(t.confidence_level||6),
-      emotional_state:t.emotional_state||"Calmo e focado",
+      emotional_state:t.emotional_state||"",
       pre_session_notes:t.pre_session_notes||"", post_trade_emotion:t.post_trade_emotion||"",
     });
     setEditingId(t.id); setTab("basic"); setShowForm(true); setMsg(""); setSelected(null);
@@ -402,8 +403,13 @@ function JournalInner() {
   };
 
   const save = async () => {
-    if (!form.entry||!form.stop_loss||!form.setup||!form.pair) {
-      setMsg("Par, Setup, Entrada e SL são obrigatórios."); return;
+    if (!form.entry||!form.stop_loss||!form.take_profit||!form.setup||!form.pair) {
+      setMsg("Par, Setup, Entrada, SL e TP são obrigatórios."); return;
+    }
+    const levelErrors = validateTrade(form);
+    if (levelErrors.length) { setMsg(levelErrors.join(" ")); return; }
+    if (form.outcome!=="RUNNING" && form.followed_plan==="") {
+      setMsg("Responde a «Seguiu o plano?» antes de gravar uma trade fechada."); return;
     }
     setSaving(true); setMsg("");
     const payload = {
@@ -414,10 +420,10 @@ function JournalInner() {
       stop_loss:Number(form.stop_loss)||0,
       take_profit:form.take_profit?Number(form.take_profit):null,
       risk_percent:Number(form.risk_percent)||1,
-      pnl:form.pnl?Number(form.pnl):0,
+      pnl:form.pnl!==""?Number(form.pnl):null,
       rr_planned:form.rr_planned?Number(form.rr_planned):null,
       rr_real:form.rr_real?Number(form.rr_real):null,
-      followed_plan:Number(form.followed_plan),
+      followed_plan:form.followed_plan===""?null:Number(form.followed_plan),
       sleep_quality:Number(form.sleep_quality),
       fatigue_level:Number(form.fatigue_level),
       stress_level:Number(form.stress_level),
@@ -557,6 +563,7 @@ function JournalInner() {
                   </F>
                   <F label="Seguiu o plano?">
                     <select value={form.followed_plan} onChange={set("followed_plan")} style={{width:"100%"}}>
+                      <option value="">— responder —</option>
                       <option value="1">Sim ✓</option>
                       <option value="0">Não ✗</option>
                     </select>
@@ -708,6 +715,7 @@ function JournalInner() {
                 <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
                   <F label="Estado emocional pré-trade">
                     <select value={form.emotional_state} onChange={set("emotional_state")} style={{width:"100%"}}>
+                      <option value="">— escolher —</option>
                       {EMOTIONAL_STATES.map(e=><option key={e}>{e}</option>)}
                     </select>
                   </F>

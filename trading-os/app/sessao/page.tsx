@@ -4,10 +4,18 @@ import Link from "next/link";
 import {
   PLAYBOOKS,
   calcRR,
-  sizeForEquity,
   type SessionAsset,
   type AssetPlaybook,
 } from "@/lib/playbooks";
+import {
+  INSTRUMENTS,
+  RISK_RULES,
+  positionSize,
+  realizedR,
+  suggestTakeProfit,
+  validateLevels,
+  type DailyGuard,
+} from "@/lib/risk";
 
 const C = {
   accent: "#4af0c4",
@@ -55,6 +63,22 @@ type SessionCtx = {
     needPause: boolean;
     closed: boolean;
   }>;
+  account: (DailyGuard & { equity: number }) | null;
+};
+
+const readLocal = (key: string, fallback: string) => {
+  try {
+    return window.localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+};
+const writeLocal = (key: string, value: string) => {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* armazenamento indisponível */
+  }
 };
 
 export default function SessaoPage() {
@@ -66,7 +90,9 @@ export default function SessaoPage() {
   const [sl, setSl] = useState("");
   const [tp, setTp] = useState("");
   const [riskPct, setRiskPct] = useState(String(PLAYBOOKS.XAUUSD.defaultRiskPct));
-  const [equity, setEquity] = useState("10000");
+  const [equity, setEquity] = useState("");
+  /** Quantos USD vale 1 unidade da moeda da conta (1 se a conta for em USD). */
+  const [usdPerUnit, setUsdPerUnit] = useState("1");
   const [sleepHours, setSleepHours] = useState("7");
   const [stress, setStress] = useState("3");
   const [grade, setGrade] = useState("B");
@@ -86,9 +112,11 @@ export default function SessaoPage() {
     setLoading(false);
   };
 
+  const sessionUrl = (eq: string) => (Number(eq) > 0 ? `/api/session?equity=${encodeURIComponent(eq)}` : "/api/session");
+
   const load = (showSpinner = false) => {
     if (showSpinner) setLoading(true);
-    fetch("/api/session")
+    fetch(sessionUrl(equity))
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<SessionCtx>;
@@ -101,17 +129,23 @@ export default function SessaoPage() {
   };
 
   useEffect(() => {
-    fetch("/api/session")
+    const eq = readLocal("tos_equity", "");
+    const fx = readLocal("tos_usd_per_unit", "1");
+    const restore = () => {
+      setEquity(eq);
+      setUsdPerUnit(fx);
+    };
+    fetch(sessionUrl(eq))
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<SessionCtx>;
       })
       .then((d) => {
+        restore();
         applyCtx(d);
-        const eq = window.localStorage.getItem("tos_equity");
-        if (eq) setEquity(eq);
       })
       .catch((e: unknown) => {
+        restore();
         setErr(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
@@ -138,13 +172,17 @@ export default function SessaoPage() {
   const nRisk = Number(riskPct);
   const nEquity = Number(equity);
   const rr = calcRR(direction, nEntry, nSl, nTp);
-  const size = sizeForEquity(nEquity, nRisk, nEntry, nSl);
+  const spec = INSTRUMENTS[asset];
+  const size = positionSize({ equity: nEquity, riskPct: nRisk, entry: nEntry, sl: nSl, spec, usdPerAccountUnit: Number(usdPerUnit) });
   const rrOk = rr != null && rr >= pb.minRR;
+  const levelErrors = entry && sl ? validateLevels(direction, nEntry, nSl, tp ? nTp : null) : [];
+  const suggestedTp = entry && sl ? suggestTakeProfit(direction, nEntry, nSl, Math.max(RISK_RULES.targetRR, pb.minRR)) : null;
+  const account = ctx?.account ?? null;
 
   const blackout = asset === "XAUUSD" ? !!ctx?.calendar?.blackoutUSD : !!ctx?.calendar?.blackoutAll;
   const day = ctx?.byAsset?.[asset];
   const mentalClosed = Number(sleepHours) < 6 || Number(stress) > 7 || grade === "D";
-  const sessionClosed = !!day?.closed || mentalClosed;
+  const sessionClosed = !!day?.closed || mentalClosed || !!account?.blocked;
 
   const autoChecks = useMemo(() => {
     const next = { ...checks };
@@ -180,7 +218,8 @@ export default function SessaoPage() {
   const failedStep = pb.steps.find((s) => autoChecks[s.id] === "no");
   let whyNot: string | null = null;
   if (sessionClosed) {
-    if (mentalClosed) whyNot = "Sessão fechada: sono abaixo de 6 h, stress acima de 7 ou nota D.";
+    if (account?.blocked) whyNot = account.reason || "Travão diário da conta atingido.";
+    else if (mentalClosed) whyNot = "Sessão fechada: sono abaixo de 6 h, stress acima de 7 ou nota D.";
     else if (day?.hitMaxTrades) whyNot = "Já atingiste o máximo de trades deste activo hoje.";
     else if (day?.hitDD) whyNot = "O limite de perdas do dia neste activo foi atingido.";
     else whyNot = "A sessão deste activo está encerrada.";
@@ -192,8 +231,16 @@ export default function SessaoPage() {
     whyNot = `Ainda falta marcar SIM neste passo: ${pendingStep.label}`;
   } else if (!entry || !sl || !tp) {
     whyNot = "Preenche entrada, stop e take profit na calculadora (coluna da direita).";
+  } else if (levelErrors.length) {
+    whyNot = levelErrors.join(" ");
   } else if (!rrOk) {
     whyNot = `O rácio lucro/risco tem de ser pelo menos 1:${pb.minRR}.`;
+  } else if (!(nEquity > 0)) {
+    whyNot = "Indica o capital da conta para calcular o lote.";
+  } else if (nRisk > RISK_RULES.maxRiskPct) {
+    whyNot = `Risco de ${nRisk}% acima do máximo de ${RISK_RULES.maxRiskPct}% por trade.`;
+  } else if (size && !size.ok) {
+    whyNot = size.reason || "O lote mínimo excede o risco permitido.";
   }
   const canSave = whyNot == null;
 
@@ -227,25 +274,28 @@ export default function SessaoPage() {
       take_profit: nTp,
       exit_price: outcome === "RUNNING" || !exitPrice ? null : Number(exitPrice),
       risk_percent: nRisk || pb.defaultRiskPct,
-      pnl: outcome === "RUNNING" ? 0 : Number(pnl || 0),
+      pnl: outcome === "RUNNING" || pnl === "" ? null : Number(pnl),
       rr_planned: rr != null ? Number(rr.toFixed(2)) : null,
-      rr_real: outcome === "RUNNING" ? null : (rr != null ? Number(rr.toFixed(2)) : null),
+      rr_real: outcome === "RUNNING" || !exitPrice ? null : (() => {
+        const r = realizedR(direction, nEntry, nSl, Number(exitPrice));
+        return r != null ? Number(r.toFixed(2)) : null;
+      })(),
       outcome,
       htf_bias: direction === "LONG" ? "Bullish" : "Bearish",
       confluences: `${asset} · ${pb.title}`,
       entry_reason: `Mesa de Operação — passos confirmados: ${stepsDone}`,
       shock_timeframe: asset === "XAUUSD" ? "M5" : "M1",
       management: pb.management.join(" "),
-      tags: "sessao,autorizado",
+      tags: `sessao,autorizado,${spec.broker}`,
       mental_state: grade,
-      followed_plan: 1,
       sleep_quality: sleepQ,
       fatigue_level: sleepQ <= 6 ? 7 : 3,
       stress_level: stressN,
       anxiety_level: stressN,
       focus_level: stressN >= 7 ? 4 : 7,
       confidence_level: grade === "A" ? 8 : grade === "B" ? 6 : 4,
-      emotional_state: grade === "A" || grade === "B" ? "Calmo e focado" : "Normal",
+      // O estado emocional e o "seguiu o plano" são respondidos no journal, nunca inferidos da nota.
+      emotional_state: "",
       pre_session_notes: `Sono ${sleepHours}h · stress ${stress}/10 · nota ${grade}`,
     };
     try {
@@ -279,7 +329,7 @@ export default function SessaoPage() {
     AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Entra na corretora e carrega em Guardar no journal — o registo é criado já com estes dados." },
     WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "O botão Guardar no journal está sempre visível (topo, calculadora e barra de baixo). Fica activo quando todos os passos estiverem a SIM e a calculadora tiver entrada, stop e alvo." },
     REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um passo falhou. Não há trade. Esperas o próximo setup deste activo." },
-    CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
+    CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: account?.blocked ? (account.reason || "Travão diário da conta atingido.") : day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
   }[verdict];
 
   return (
@@ -550,11 +600,27 @@ export default function SessaoPage() {
                 <input type="number" step="any" value={tp} onChange={(e) => setTp(e.target.value)} style={{ width: "100%" }} />
               </div>
               <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL ($)</div>
-                <input type="number" step="100" value={equity} onChange={(e) => {
+                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL DA CONTA ({spec.broker})</div>
+                <input type="number" step="1" value={equity} placeholder="ex.: 142" onChange={(e) => {
                   setEquity(e.target.value);
-                  window.localStorage.setItem("tos_equity", e.target.value);
+                  writeLocal("tos_equity", e.target.value);
+                }} onBlur={() => load(false)} style={{ width: "100%" }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>USD POR 1 UNIDADE DA CONTA</div>
+                <input type="number" step="0.01" value={usdPerUnit} onChange={(e) => {
+                  setUsdPerUnit(e.target.value);
+                  writeLocal("tos_usd_per_unit", e.target.value);
                 }} style={{ width: "100%" }} />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                <button
+                  onClick={() => suggestedTp != null && setTp(suggestedTp.toFixed(asset === "XAUUSD" ? 2 : 4))}
+                  disabled={suggestedTp == null}
+                  style={{ width: "100%", background: C.elevated, color: suggestedTp == null ? C.muted : C.accent, border: `1px solid ${C.border}`, padding: "8px 10px", borderRadius: 6, fontSize: 11, cursor: suggestedTp == null ? "not-allowed" : "pointer" }}
+                >
+                  TP a {Math.max(RISK_RULES.targetRR, pb.minRR)}R{suggestedTp != null ? ` → ${fmtPrice(suggestedTp, asset)}` : ""}
+                </button>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
@@ -566,11 +632,17 @@ export default function SessaoPage() {
                 <div style={{ fontSize: 9, color: C.muted }}>mínimo {pb.minRR}</div>
               </div>
               <div style={{ background: C.elevated, borderRadius: 6, padding: 10, border: `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 9, color: C.muted }}>SIZE (unidades)</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: "#e2e8f0" }}>
-                  {size == null ? "—" : size.toLocaleString("pt-PT", { maximumFractionDigits: 4 })}
+                <div style={{ fontSize: 9, color: C.muted }}>LOTE ({spec.lotLabel})</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: size == null ? C.muted : size.ok ? "#e2e8f0" : C.red }}>
+                  {size == null ? "—" : size.ok ? size.lots.toLocaleString("pt-PT", { maximumFractionDigits: 2 }) : "BLOQUEADO"}
                 </div>
-                <div style={{ fontSize: 9, color: C.muted }}>{nRisk}% de ${nEquity || 0}</div>
+                <div style={{ fontSize: 9, color: C.muted }}>
+                  {size == null
+                    ? `${nRisk}% de ${nEquity || 0}`
+                    : size.ok
+                      ? `risco ${size.actualRisk.toFixed(2)} (${nRisk}% = ${size.riskMoney.toFixed(2)})`
+                      : `lote mín. arrisca ${size.minLotRiskPct.toFixed(1)}%`}
+                </div>
               </div>
             </div>
             <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>

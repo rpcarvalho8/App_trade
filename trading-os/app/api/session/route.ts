@@ -4,6 +4,7 @@ import { fetchCalendar, todayISO } from "@/lib/morning-brief";
 import { canonicalizePair } from "@/lib/pairs";
 import { PLAYBOOKS, type SessionAsset } from "@/lib/playbooks";
 import { recentAlerts } from "@/lib/alert-ws";
+import { dailyGuard } from "@/lib/risk";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,9 +48,10 @@ function minutesUntil(iso: string): number | null {
   return (t - Date.now()) / 60000;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   await initDB();
   const date = todayISO();
+  const equity = Number(new URL(req.url).searchParams.get("equity"));
 
   const [prices, cal] = await Promise.all([
     fetchPrices(),
@@ -78,6 +80,12 @@ export async function GET() {
           FROM trades WHERE date = ? ORDER BY id DESC`,
     args: [date],
   });
+  // Travão da conta inteira, com o P&L real das trades fechadas de hoje (mais antiga primeiro).
+  const closedPnls = (tradesRes.rows as unknown as Array<{ outcome: string; pnl: number | null }>)
+    .filter((t) => t.outcome !== "RUNNING" && t.pnl != null)
+    .map((t) => Number(t.pnl))
+    .reverse();
+  const account = Number.isFinite(equity) && equity > 0 ? { equity, ...dailyGuard(closedPnls, equity) } : null;
   const todayTrades = tradesRes.rows as unknown as Array<{
     id: number;
     pair: string;
@@ -103,7 +111,8 @@ export async function GET() {
     }
 
     const hitMaxTrades = count >= pb.maxTrades;
-    const hitDD = lossRisk >= pb.maxDailyDD;
+    // Com capital conhecido usa o P&L real; o risco % declarado fica só como recurso.
+    const hitDD = account ? (Math.max(0, -pnl) / account.equity) * 100 >= pb.maxDailyDD : lossRisk >= pb.maxDailyDD;
     const needPause = consecutiveLosses >= pb.pauseAfterLosses;
     const closed = hitMaxTrades || hitDD;
 
@@ -131,6 +140,7 @@ export async function GET() {
       blackoutUSD,
     },
     alerts: recentAlerts().slice(0, 8),
+    account,
     byAsset: {
       XAUUSD: pairState("XAUUSD"),
       SOLUSD: pairState("SOLUSD"),

@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
   const pnl = trades.reduce((s,t) => s + Number(t.pnl||0), 0);
   const wins = trades.filter(t => t.outcome === "WIN").length;
   const losses = trades.filter(t => t.outcome === "LOSS").length;
-  const violations = trades.filter(t => !t.followed_plan).length;
+  const violations = trades.filter(t => t.followed_plan === 0 || t.followed_plan === "0").length;
   const avgSleep = trades.length ? trades.reduce((s,t) => s + Number(t.sleep_quality||5), 0) / trades.length : 0;
   const avgStress = trades.length ? trades.reduce((s,t) => s + Number(t.stress_level||5), 0) / trades.length : 0;
   const avgFocus = trades.length ? trades.reduce((s,t) => s + Number(t.focus_level||5), 0) / trades.length : 0;
