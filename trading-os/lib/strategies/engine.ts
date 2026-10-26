@@ -245,7 +245,7 @@ function buildSignal(
         : undefined);
 
   let sl = ctx.stopLossLevel;
-  let tp = ctx.takeProfitLevel;
+  let tp = ctx.takeProfitLevel ?? ctx.takeProfitLevels?.[direction];
 
   // Heurísticas se não fornecidos
   if (entry != null && sl == null) {

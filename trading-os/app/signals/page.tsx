@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { validateLevels } from "@/lib/risk";
 
 const C = {
   accent: "#4af0c4",
@@ -138,15 +139,50 @@ export default function SignalsPage() {
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: C.secondary }}>
-                  {sig.strategy_id} · R:R {Number(sig.rr || 0).toFixed(2)} · entry {sig.entry ?? "—"}
-                </div>
+                <SignalLevels sig={sig} />
                 <div style={{ fontSize: 10, color: C.muted }}>{sig.created_at}</div>
               </div>
             ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const fmtPrice = (v: unknown) => {
+  const n = Number(v);
+  return v == null || v === "" || !Number.isFinite(n) || n <= 0 ? "—" : n.toFixed(2);
+};
+
+/** Entrada, SL e TP de cada sinal — o que é preciso para pôr a ordem no MT5. */
+function SignalLevels({ sig }: { sig: Record<string, unknown> }) {
+  const side = String(sig.direction).toLowerCase() === "long" ? "LONG" : "SHORT";
+  const entry = Number(sig.entry);
+  const sl = Number(sig.stop_loss);
+  const tp = Number(sig.take_profit);
+  // Sinais antigos podem ter níveis em falta ou do lado errado: não servem para operar.
+  const errors = validateLevels(side, entry, sl, tp);
+  const risk = Math.abs(entry - sl);
+  const cell = (label: string, value: string, color: string) => (
+    <span style={{ whiteSpace: "nowrap" }}>
+      <span style={{ color: C.muted }}>{label} </span>
+      <span style={{ color, fontWeight: 600 }}>{value}</span>
+    </span>
+  );
+  return (
+    <div style={{ fontSize: 11, color: C.secondary, display: "flex", flexWrap: "wrap", gap: "4px 16px", alignItems: "center" }}>
+      {cell("Entrada", fmtPrice(sig.entry), "#e2e8f0")}
+      {cell("SL", fmtPrice(sig.stop_loss), C.red)}
+      {cell("TP", fmtPrice(sig.take_profit), C.green)}
+      {cell("R:R", Number(sig.rr || 0).toFixed(2), C.secondary)}
+      {Number.isFinite(risk) && risk > 0 && cell("Risco", `${risk.toFixed(2)} USD/unid.`, C.muted)}
+      {errors.length > 0 && (
+        <span title={errors.join(" ")} style={{ color: C.red, fontSize: 10, border: `1px solid ${C.red}55`, padding: "1px 6px", borderRadius: 4 }}>
+          INVÁLIDO — não operar
+        </span>
+      )}
+      <span style={{ color: C.muted, fontSize: 10 }}>{String(sig.strategy_id)}</span>
     </div>
   );
 }
