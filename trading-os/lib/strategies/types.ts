@@ -76,6 +76,8 @@ export interface StrategyRisk {
   slLogic?: string;
   tpLogic?: string;
   rrMin: number;
+  /** Distância mínima do SL à entrada, em % do preço. Stops mais curtos são ruído, não sinal. */
+  minStopPct?: number;
   partialAt1R?: PartialAt1R;
   slAggressive?: SlAggressive;
   slConservative?: string;
