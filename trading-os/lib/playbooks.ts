@@ -30,6 +30,9 @@ export interface AssetPlaybook {
   pauseMinutes: number;
   defaultRiskPct: number;
   reducedRiskPct: number;
+  /** "observacao" = só demo até o histórico provar edge (ver nota). */
+  status: "live" | "observacao";
+  statusNote?: string;
   steps: PlaybookStep[];
   management: string[];
   invalidation: string[];
@@ -50,8 +53,9 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
     maxDailyDD: 1.5,
     pauseAfterLosses: 2,
     pauseMinutes: 30,
-    defaultRiskPct: 1,
-    reducedRiskPct: 0.5,
+    defaultRiskPct: 0.5,
+    reducedRiskPct: 0.25,
+    status: "live",
     steps: [
       {
         id: "news",
@@ -145,11 +149,13 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
     timeframes: "15 minutos = direcção · 1 minuto = viragem, gap e ordem",
     minRR: 3,
     maxTrades: 3,
-    maxDailyDD: 3,
+    maxDailyDD: 1.5,
     pauseAfterLosses: 2,
     pauseMinutes: 30,
-    defaultRiskPct: 1,
-    reducedRiskPct: 0.5,
+    defaultRiskPct: 0.5,
+    reducedRiskPct: 0.25,
+    status: "observacao",
+    statusNote: "Em observação: no histórico, SOL deu PF 0,44 em 51 trades. Opera só em demo até teres 30 trades com PF acima de 1,3 e payoff acima de 1,5. As trades gravadas aqui ficam marcadas como demo.",
     steps: [
       {
         id: "sweep",

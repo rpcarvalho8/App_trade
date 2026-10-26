@@ -185,3 +185,41 @@ describe("fixtures smoke", () => {
     expect(solFvgPositive.length).toBeGreaterThan(5);
   });
 });
+
+describe("evaluateStrategy valida o lado do SL/TP", () => {
+  it("não emite sinal com o SL do lado errado da entrada", () => {
+    let state = createEngineState(STRATEGY_SOLUSD.id);
+    const m1Base = solChochPositive.slice(0, -1);
+    const ctxSweep: EngineContext = {
+      calendarClean: true,
+      sessionOk: true,
+      price: 150,
+      spread: 0.01,
+      stopLossLevel: 149,
+      takeProfitLevel: 153,
+      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+    };
+    let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
+    state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solChochPositive, M1: solChochPositive },
+    });
+    state = { ...r.state, sweepCandleIndex: solFvgPositive.length - 2 };
+
+    const step3: EngineContext = {
+      ...ctxSweep,
+      bias: state.bias || "bearish",
+      price: 103.5,
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solFvgPositive, M1: solFvgPositive },
+    };
+    const long = (state.bias || "bearish") === "bullish";
+    // SL e TP trocados de lado: R:R continua a dar 3 em valor absoluto.
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...step3,
+      stopLossLevel: long ? 104.5 : 102.5,
+      takeProfitLevel: long ? 100.5 : 106.5,
+    });
+    expect(r.signal).toBeNull();
+  });
+});

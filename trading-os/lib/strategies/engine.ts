@@ -14,6 +14,7 @@ import { mssCisd } from "./detectors/mssCisd";
 import { obOrFvg } from "./detectors/obOrFvg";
 import { chochVolume } from "./detectors/chochVolume";
 import { fvgGoldenRatio } from "./detectors/fvgGoldenRatio";
+import { validateLevels } from "@/lib/risk";
 
 /** Normaliza chaves de TF (M15 ↔ 15m, M5 ↔ 5m, M1 ↔ 1m). */
 export function normalizeTf(tf: string): string {
@@ -260,10 +261,10 @@ function buildSignal(
     tp = direction === "long" ? entry + risk * rrMin : entry - risk * rrMin;
   }
 
-  let rr = 0;
-  if (entry != null && sl != null && tp != null) {
-    rr = calcRR(entry, sl, tp);
-  }
+  // PE, SL e TP obrigatórios e do lado certo do preço — senão não há sinal.
+  if (entry == null || sl == null || tp == null) return null;
+  if (validateLevels(direction === "long" ? "LONG" : "SHORT", entry, sl, tp).length) return null;
+  const rr = calcRR(entry, sl, tp);
 
   // Gate R:R
   if (rr < rrMin) {
