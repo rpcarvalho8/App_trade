@@ -286,7 +286,7 @@ export default function SessaoPage() {
       entry_reason: `Mesa de Operação — passos confirmados: ${stepsDone}`,
       shock_timeframe: asset === "XAUUSD" ? "M5" : "M1",
       management: pb.management.join(" "),
-      tags: `sessao,autorizado,${spec.broker}`,
+      tags: `sessao,autorizado,${spec.broker}${pb.status === "observacao" ? ",demo" : ""}`,
       mental_state: grade,
       sleep_quality: sleepQ,
       fatigue_level: sleepQ <= 6 ? 7 : 3,
@@ -327,7 +327,7 @@ export default function SessaoPage() {
 
   const verdictUI = {
     AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Entra na corretora e carrega em Guardar no journal — o registo é criado já com estes dados." },
-    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "O botão Guardar no journal está sempre visível (topo, calculadora e barra de baixo). Fica activo quando todos os passos estiverem a SIM e a calculadora tiver entrada, stop e alvo." },
+    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "Marca os passos por ordem e preenche entrada e stop. A barra de baixo diz o que falta." },
     REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um passo falhou. Não há trade. Esperas o próximo setup deste activo." },
     CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: account?.blocked ? (account.reason || "Travão diário da conta atingido.") : day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
   }[verdict];
@@ -364,6 +364,12 @@ export default function SessaoPage() {
           </button>
         </div>
       </div>
+
+      {pb.status === "observacao" && (
+        <div style={{ background: "#2e1064", border: `1px solid ${C.purple}55`, color: "#ddd6fe", padding: "10px 14px", borderRadius: 8, fontSize: 12, lineHeight: 1.5 }}>
+          {pb.statusNote}
+        </div>
+      )}
 
       {err && (
         <div style={{ background: "#3b1a1a", border: `1px solid ${C.red}55`, color: "#fca5a5", padding: "10px 14px", borderRadius: 8, fontSize: 12 }}>
@@ -422,8 +428,10 @@ export default function SessaoPage() {
               <div style={{ color: day?.needPause ? C.red : "#e2e8f0", fontWeight: 700 }}>{day?.consecutiveLosses ?? 0}/{pb.pauseAfterLosses}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: C.muted }}>PERDAS DO DIA (risco)</div>
-              <div style={{ color: day?.hitDD ? C.red : "#e2e8f0", fontWeight: 700 }}>{Number(day?.lossRisk || 0).toFixed(1)}% / {pb.maxDailyDD}%</div>
+              <div style={{ fontSize: 9, color: C.muted }}>PERDA DO DIA (conta)</div>
+              <div style={{ color: account?.blocked || day?.hitDD ? C.red : "#e2e8f0", fontWeight: 700 }}>
+                {account ? `${account.dayLossPct.toFixed(2)}% / ${RISK_RULES.maxDailyLossPct}%` : "define o capital"}
+              </div>
             </div>
             <div>
               <div style={{ fontSize: 9, color: C.muted }}>P&amp;L DIA</div>
@@ -440,11 +448,6 @@ export default function SessaoPage() {
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: verdictUI.color, letterSpacing: 1 }}>{verdictUI.label}</div>
           <div style={{ fontSize: 12, color: C.secondary, marginTop: 4 }}>{verdictUI.hint}</div>
-          {whyNot && (
-            <div style={{ fontSize: 12, color: C.amber, marginTop: 8, maxWidth: 560, lineHeight: 1.45 }}>
-              Para activar o botão: {whyNot}
-            </div>
-          )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
@@ -671,11 +674,8 @@ export default function SessaoPage() {
                 )}
               </div>
               <div style={{ fontSize: 10, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
-                Grava-se {asset}, {pb.setupName}, {direction}, entrada/stop/alvo, rácio e «seguiu o plano». Capturas de ecrã podes acrescentar depois no journal.
+                Grava-se {asset}, {pb.setupName}, {direction}, entrada/stop/alvo e rácio. «Seguiu o plano?» e capturas respondes no journal ao fechar a trade.
               </div>
-              {whyNot && (
-                <div style={{ fontSize: 12, color: C.amber, marginTop: 10, lineHeight: 1.45 }}>{whyNot}</div>
-              )}
               <button
                 onClick={saveTrade}
                 disabled={saving || !canSave}
