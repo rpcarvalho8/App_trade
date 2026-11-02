@@ -288,5 +288,43 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
       candlesByTf: { ...ctxSweep.candlesByTf, "1m": solFvgPositive, M1: solFvgPositive },
     });
     expect(r.signal).toBeNull();
+    expect(r.reason).toBe("stop_too_tight");
+    expect(r.state.lastInvalidation).toBe("stop_too_tight");
+  });
+
+  it("usa o alvo de 3R quando a liquidez fica mais perto (não descarta o setup)", () => {
+    let state = createEngineState(STRATEGY_SOLUSD.id);
+    const m1Base = solChochPositive.slice(0, -1);
+    const ctxSweep: EngineContext = {
+      calendarClean: true,
+      sessionOk: true,
+      price: 150,
+      spread: 0.01,
+      stopLossLevel: 149,
+      takeProfitLevel: 153,
+      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+    };
+    let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
+    state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solChochPositive, M1: solChochPositive },
+    });
+    state = { ...r.state, sweepCandleIndex: solFvgPositive.length - 2 };
+    const long = (state.bias || "bearish") === "bullish";
+
+    // Liquidez a só 1R da entrada: antes o setup era descartado por R:R < 3.
+    r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      ...ctxSweep,
+      bias: state.bias || "bearish",
+      price: 103.5,
+      stopLossLevel: long ? 102.5 : 104.5,
+      takeProfitLevel: undefined,
+      takeProfitLevels: { long: 104.5, short: 102.5 },
+      candlesByTf: { ...ctxSweep.candlesByTf, "1m": solFvgPositive, M1: solFvgPositive },
+    });
+    expect(r.signal).not.toBeNull();
+    expect(r.signal!.takeProfit).toBe(long ? 106.5 : 100.5);
+    expect(r.signal!.rr).toBeCloseTo(3);
   });
 });

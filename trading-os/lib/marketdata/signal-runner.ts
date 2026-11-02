@@ -12,7 +12,7 @@ import {
   createEngineState,
   normalizeTf,
 } from "@/lib/strategies";
-import type { EngineContext, EngineState, Candle } from "@/lib/strategies/types";
+import type { EngineContext, EngineEvaluation, EngineState, Candle, StrategyDefinition } from "@/lib/strategies/types";
 import {
   getXauBuffers,
   onXauTick,
@@ -34,6 +34,59 @@ interface RunnerState {
   newsBlackout: boolean;
   newsCheckedAt: number;
   solReady: boolean;
+  diag?: Record<"XAUUSD" | "SOLUSD", AssetDiag>;
+}
+
+/** Diagnóstico por activo: onde está a sequência e porque é que o último sinal não saiu. */
+export interface AssetDiag {
+  lastEvalAt: number | null;
+  /** Porque é que o motor não está a avaliar agora (sem dados, sem histórico, …). */
+  idleReason: string | null;
+  step: number;
+  totalSteps: number;
+  nextStepType: string | null;
+  lastReject: { reason: string; at: number } | null;
+  /** Rejeições no dia (UTC), por motivo. */
+  rejects: { day: string; counts: Record<string, number> };
+  lastSignalAt: number | null;
+}
+
+function emptyDiag(totalSteps: number): AssetDiag {
+  return {
+    lastEvalAt: null,
+    idleReason: "ainda não chegou nenhum preço (a arrancar ou fonte de dados em baixo)",
+    step: 0,
+    totalSteps,
+    nextStepType: null,
+    lastReject: null,
+    rejects: { day: "", counts: {} },
+    lastSignalAt: null,
+  };
+}
+
+function diagFor(asset: "XAUUSD" | "SOLUSD"): AssetDiag {
+  const s = state();
+  s.diag ??= {
+    XAUUSD: emptyDiag(STRATEGY_XAUUSD.sequence.length),
+    SOLUSD: emptyDiag(STRATEGY_SOLUSD.sequence.length),
+  };
+  return s.diag[asset];
+}
+
+function recordEval(asset: "XAUUSD" | "SOLUSD", strategy: StrategyDefinition, result: EngineEvaluation, now: number): void {
+  const d = diagFor(asset);
+  d.lastEvalAt = now;
+  d.idleReason = null;
+  const steps = [...strategy.sequence].sort((a, b) => a.step - b.step);
+  d.step = result.state.currentStepIndex;
+  d.nextStepType = steps[result.state.currentStepIndex]?.type ?? null;
+  if (result.signal) d.lastSignalAt = now;
+  if (result.invalidated && result.reason) {
+    const day = new Date(now).toISOString().slice(0, 10);
+    if (d.rejects.day !== day) d.rejects = { day, counts: {} };
+    d.rejects.counts[result.reason] = (d.rejects.counts[result.reason] || 0) + 1;
+    d.lastReject = { reason: result.reason, at: now };
+  }
 }
 
 function state(): RunnerState {
@@ -117,7 +170,10 @@ async function evalXau(price: number): Promise<void> {
   s.lastXauEval = now;
 
   // Gate: sem backfill completo não avalia confluences
-  if (!isXauReady()) return;
+  if (!isXauReady()) {
+    diagFor("XAUUSD").idleReason = "à espera do histórico de velas (Twelve Data)";
+    return;
+  }
 
   const newsBlocked = await refreshNewsBlackout();
   const buffers = getXauBuffers().snapshot();
@@ -133,6 +189,7 @@ async function evalXau(price: number): Promise<void> {
 
   const result = evaluateStrategy(STRATEGY_XAUUSD, s.xau, ctx);
   s.xau = result.state;
+  recordEval("XAUUSD", STRATEGY_XAUUSD, result, now);
   if (result.signal) {
     await emitSignalAlert(result.signal);
     s.xau.lastSignalAt = now;
@@ -150,7 +207,10 @@ async function evalSol(price: number, spread?: number): Promise<void> {
   const m1 = buffers["1m"] || [];
   // SOL ready quando tem histórico mínimo
   s.solReady = m15.length >= 20 && m1.length >= 30;
-  if (!s.solReady) return;
+  if (!s.solReady) {
+    diagFor("SOLUSD").idleReason = "à espera do histórico de velas (Kraken)";
+    return;
+  }
 
   const newsBlocked = await refreshNewsBlackout();
   const candlesByTf = mapBuffers(buffers, {
@@ -182,6 +242,7 @@ async function evalSol(price: number, spread?: number): Promise<void> {
 
   const result = evaluateStrategy(STRATEGY_SOLUSD, s.sol, ctx);
   s.sol = result.state;
+  recordEval("SOLUSD", STRATEGY_SOLUSD, result, now);
   if (result.signal) {
     await emitSignalAlert(result.signal);
     s.sol.lastSignalAt = now;
@@ -222,6 +283,7 @@ export function getRunnerDebug() {
     newsBlackout: s.newsBlackout,
     xau,
     solReady: s.solReady,
+    diag: { XAUUSD: diagFor("XAUUSD"), SOLUSD: diagFor("SOLUSD") },
     /** Estado agregado para /api/signals */
     status: !xau.ready
       ? xau.status === "error"

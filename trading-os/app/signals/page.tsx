@@ -36,6 +36,44 @@ type AssetStatus = {
   };
 };
 
+type AssetDiag = {
+  lastEvalAt: number | null;
+  idleReason: string | null;
+  step: number;
+  totalSteps: number;
+  nextStepType: string | null;
+  lastReject: { reason: string; at: number } | null;
+  rejects: { day: string; counts: Record<string, number> };
+  lastSignalAt: number | null;
+};
+
+const STEP_LABELS: Record<string, string> = {
+  calendar_clean: "calendário sem notícias fortes",
+  bias_h4: "bias H4 claro",
+  liquidity_sweep: "sweep de liquidez",
+  mss_cisd: "MSS / CISD",
+  ob_or_fvg: "OB ou FVG no M5",
+  choch_volume: "CHoCH com volume no M1",
+  fvg_golden_ratio: "FVG na zona 0,618–0,786",
+};
+
+const REJECT_LABELS: Record<string, string> = {
+  no_direction: "sem direcção definida",
+  levels_missing: "sem SL/TP calculável",
+  levels_wrong_side: "preço já passou o SL (setup falhado)",
+  stop_too_tight: "SL demasiado curto (ruído)",
+  rr_below_min: "R:R abaixo do mínimo",
+  spread_too_wide: "spread demasiado largo",
+  outside_session: "fora da sessão",
+  confluences_missing: "confluências em falta",
+  maxCandlesAfterSweep_exceeded: "setup expirou depois do sweep",
+  maxCandlesAfterStep1ForChoCH_exceeded: "CHoCH não apareceu a tempo",
+  step_maxCandles_exceeded: "passo expirou",
+};
+
+const hhmm = (ts: number | null | undefined) =>
+  ts ? new Date(ts).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" }) : "—";
+
 export default function SignalsPage() {
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
@@ -92,9 +130,11 @@ export default function SignalsPage() {
         <AssetCard
           title="XAUUSD — London Structure"
           asset={xau}
+          diag={data?.runner?.diag?.XAUUSD}
+          now={data?.now}
           forceBeta
         />
-        <AssetCard title="SOLUSD — SMC 3-Step" asset={sol} />
+        <AssetCard title="SOLUSD — SMC 3-Step" asset={sol} diag={data?.runner?.diag?.SOLUSD} now={data?.now} />
       </div>
 
       <div>
@@ -187,13 +227,51 @@ function SignalLevels({ sig }: { sig: Record<string, unknown> }) {
   );
 }
 
+/** Onde está a sequência e porque é que os últimos setups não deram sinal. */
+function DiagBlock({ diag, now }: { diag?: AssetDiag; now?: number }) {
+  if (!diag) return null;
+  const stale = !diag.lastEvalAt || (now != null && now - diag.lastEvalAt > 5 * 60_000);
+  const counts = Object.entries(diag.rejects?.counts || {}).sort((a, b) => b[1] - a[1]);
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.border}`, fontSize: 11, lineHeight: 1.6 }}>
+      {diag.idleReason ? (
+        <div style={{ color: C.amber }}>Parado: {diag.idleReason}</div>
+      ) : stale ? (
+        <div style={{ color: C.amber }}>Sem avaliações desde {hhmm(diag.lastEvalAt)}: sem preços a chegar.</div>
+      ) : (
+        <div style={{ color: C.secondary }}>
+          Passo {Math.min(diag.step + 1, diag.totalSteps)}/{diag.totalSteps}: à espera de{" "}
+          <span style={{ color: "#e2e8f0" }}>{STEP_LABELS[diag.nextStepType || ""] || diag.nextStepType || "—"}</span>
+          <span style={{ color: C.muted }}> · avaliado às {hhmm(diag.lastEvalAt)}</span>
+        </div>
+      )}
+      <div style={{ color: C.muted }}>Último sinal: {diag.lastSignalAt ? hhmm(diag.lastSignalAt) : "nenhum desde o arranque"}</div>
+      {diag.lastReject && (
+        <div style={{ color: C.muted }}>
+          Último setup descartado às {hhmm(diag.lastReject.at)}:{" "}
+          <span style={{ color: C.amber }}>{REJECT_LABELS[diag.lastReject.reason] || diag.lastReject.reason}</span>
+        </div>
+      )}
+      {counts.length > 0 && (
+        <div style={{ color: C.muted, fontSize: 10 }}>
+          Descartados hoje: {counts.map(([k, v]) => `${REJECT_LABELS[k] || k} ${v}`).join(" · ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AssetCard({
   title,
   asset,
+  diag,
+  now,
   forceBeta,
 }: {
   title: string;
   asset: AssetStatus;
+  diag?: AssetDiag;
+  now?: number;
   forceBeta?: boolean;
 }) {
   const beta = forceBeta || asset.beta || asset.mode === "beta";
@@ -282,6 +360,7 @@ function AssetCard({
           </div>
         )}
       </div>
+      <DiagBlock diag={diag} now={now} />
     </div>
   );
 }
