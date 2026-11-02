@@ -225,15 +225,18 @@ function checkTimeouts(
   return null;
 }
 
+type BuildResult = { signal: EngineSignal; reason?: undefined } | { signal: null; reason: string };
+const reject = (reason: string): BuildResult => ({ signal: null, reason });
+
 function buildSignal(
   strategy: StrategyDefinition,
   state: EngineState,
   ctx: EngineContext,
   lastDetails: Record<string, unknown>
-): EngineSignal | null {
+): BuildResult {
   const rrMin = strategy.risk.rrMin;
   const directionBias = (state.bias || state.sweepDirection || "neutral") as BiasDirection;
-  if (directionBias === "neutral") return null;
+  if (directionBias === "neutral") return reject("no_direction");
 
   const direction = directionBias === "bullish" ? "long" : "short";
   const entry =
@@ -245,7 +248,9 @@ function buildSignal(
         : undefined);
 
   let sl = ctx.stopLossLevel;
-  let tp = ctx.takeProfitLevel ?? ctx.takeProfitLevels?.[direction];
+  let tp = ctx.takeProfitLevel;
+  // Liquidez oposta sugerida pelo runner — só serve se ficar à distância mínima de R:R.
+  const liquidityTp = tp == null ? ctx.takeProfitLevels?.[direction] : undefined;
 
   // Heurísticas se não fornecidos
   if (entry != null && sl == null) {
@@ -258,19 +263,23 @@ function buildSignal(
   }
   if (entry != null && tp == null && sl != null) {
     const risk = Math.abs(entry - sl);
-    tp = direction === "long" ? entry + risk * rrMin : entry - risk * rrMin;
+    const rrTarget = direction === "long" ? entry + risk * rrMin : entry - risk * rrMin;
+    // tpLogic do SOL: "1:3 ou liquidez 15m" — a liquidez só substitui o alvo mínimo se estiver mais longe.
+    const liquidityFurther =
+      liquidityTp != null && (direction === "long" ? liquidityTp > rrTarget : liquidityTp < rrTarget);
+    tp = liquidityFurther ? liquidityTp : rrTarget;
   }
 
   // PE, SL e TP obrigatórios e do lado certo do preço — senão não há sinal.
-  if (entry == null || sl == null || tp == null) return null;
-  if (validateLevels(direction === "long" ? "LONG" : "SHORT", entry, sl, tp).length) return null;
+  if (entry == null || sl == null || tp == null) return reject("levels_missing");
+  if (validateLevels(direction === "long" ? "LONG" : "SHORT", entry, sl, tp).length) return reject("levels_wrong_side");
   const minStopPct = strategy.risk.minStopPct;
-  if (minStopPct != null && (Math.abs(entry - sl) / entry) * 100 < minStopPct) return null;
+  if (minStopPct != null && (Math.abs(entry - sl) / entry) * 100 < minStopPct) return reject("stop_too_tight");
   const rr = calcRR(entry, sl, tp);
 
   // Gate R:R
   if (rr < rrMin) {
-    return null;
+    return reject("rr_below_min");
   }
 
   // Spread gate (SOL)
@@ -284,7 +293,7 @@ function buildSignal(
           ? Math.abs(lastDetails.fvgHigh - lastDetails.fvgLow)
           : 0;
       if (fvgSize > 0 && ctx.spread > fvgSize * 0.5) {
-        return null;
+        return reject("spread_too_wide");
       }
       void spreadPctOfFvg;
     }
@@ -292,7 +301,7 @@ function buildSignal(
 
   // Session confluence for XAU
   if (strategy.confluences.includes("session_window") && ctx.sessionOk === false) {
-    return null;
+    return reject("outside_session");
   }
 
   const allConfluenceKeys = new Set<string>();
@@ -370,10 +379,10 @@ function buildSignal(
   }
   const stillMissing = strategy.confluences.filter((k) => !allConfluenceKeys.has(k));
   if (stillMissing.length > 0) {
-    return null;
+    return reject("confluences_missing");
   }
 
-  return {
+  const signal: EngineSignal = {
     strategyId: strategy.id,
     symbol: strategy.symbol,
     direction,
@@ -387,6 +396,7 @@ function buildSignal(
     emittedAt: ctx.now ?? Date.now(),
     audit,
   };
+  return { signal };
 }
 
 export function createEngineState(strategyId: string): EngineState {
@@ -476,19 +486,20 @@ export function evaluateStrategy(
   }
 
   // Completa — tentar emitir sinal
-  const signal = buildSignal(strategy, newState, ctx, result.details);
-  if (!signal) {
+  const built = buildSignal(strategy, newState, ctx, result.details);
+  if (!built.signal) {
     const reset = createEngineState(strategy.id);
-    reset.lastInvalidation = "rr_or_confluence_failed";
+    reset.lastInvalidation = built.reason;
     reset.bias = newState.bias;
     return {
       state: reset,
       signal: null,
       progressed: true,
       invalidated: true,
-      reason: "rr_or_confluence_failed",
+      reason: built.reason,
     };
   }
+  const signal = built.signal;
 
   const after: EngineState = createEngineState(strategy.id);
   after.lastSignalAt = signal.emittedAt;
