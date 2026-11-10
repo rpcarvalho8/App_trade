@@ -6,7 +6,7 @@ import {
   STRATEGY_XAUUSD,
   STRATEGY_SOLUSD,
 } from "../index";
-import type { EngineContext } from "../types";
+import type { Candle, EngineContext } from "../types";
 import {
   xauSweepPositive,
   xauMssPositive,
@@ -15,6 +15,22 @@ import {
   solChochPositive,
   solFvgPositive,
 } from "../__fixtures__/candles";
+
+/**
+ * Sweep 15m de mínimos (bullish), espelho de solSweepPositive, com a vela do sweep a abrir
+ * no início do fixture de 1m. O motor exige agora ChoCH na direcção do sweep e depois dele.
+ */
+const solSweepBullish: Candle[] = (() => {
+  const shift = solChochPositive[0].time - solSweepPositive[solSweepPositive.length - 1].time;
+  return solSweepPositive.map((b) => ({
+    time: b.time + shift,
+    open: 300 - b.open,
+    high: 300 - b.low,
+    low: 300 - b.high,
+    close: 300 - b.close,
+    volume: b.volume,
+  }));
+})();
 
 describe("calcRR", () => {
   it("calcula R:R correctamente", () => {
@@ -95,8 +111,8 @@ describe("evaluateStrategy SOLUSD timeouts", () => {
       calendarClean: true,
       price: 150,
       candlesByTf: {
-        "15m": solSweepPositive,
-        M15: solSweepPositive,
+        "15m": solSweepBullish,
+        M15: solSweepBullish,
         "1m": m1,
         M1: m1,
       },
@@ -128,8 +144,8 @@ describe("evaluateStrategy SOLUSD full signal", () => {
       stopLossLevel: 149,
       takeProfitLevel: 153, // RR = 3/1 = 3
       candlesByTf: {
-        "15m": solSweepPositive,
-        M15: solSweepPositive,
+        "15m": solSweepBullish,
+        M15: solSweepBullish,
         "1m": m1Base,
         M1: m1Base,
       },
@@ -197,7 +213,7 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
       spread: 0.01,
       stopLossLevel: 149,
       takeProfitLevel: 153,
-      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+      candlesByTf: { "15m": solSweepBullish, M15: solSweepBullish, "1m": m1Base, M1: m1Base },
     };
     let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
     state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
@@ -233,7 +249,7 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
       spread: 0.01,
       stopLossLevel: 149,
       takeProfitLevel: 153,
-      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+      candlesByTf: { "15m": solSweepBullish, M15: solSweepBullish, "1m": m1Base, M1: m1Base },
     };
     let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
     state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
@@ -267,7 +283,7 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
       spread: 0.01,
       stopLossLevel: 149,
       takeProfitLevel: 153,
-      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+      candlesByTf: { "15m": solSweepBullish, M15: solSweepBullish, "1m": m1Base, M1: m1Base },
     };
     let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
     state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
@@ -302,7 +318,7 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
       spread: 0.01,
       stopLossLevel: 149,
       takeProfitLevel: 153,
-      candlesByTf: { "15m": solSweepPositive, M15: solSweepPositive, "1m": m1Base, M1: m1Base },
+      candlesByTf: { "15m": solSweepBullish, M15: solSweepBullish, "1m": m1Base, M1: m1Base },
     };
     let r = evaluateStrategy(STRATEGY_SOLUSD, state, ctxSweep);
     state = { ...r.state, sweepCandleIndex: solChochPositive.length - 2 };
@@ -326,5 +342,61 @@ describe("evaluateStrategy valida o lado do SL/TP", () => {
     expect(r.signal).not.toBeNull();
     expect(r.signal!.takeProfit).toBe(long ? 106.5 : 100.5);
     expect(r.signal!.rr).toBeCloseTo(3);
+  });
+});
+
+describe("timeouts por tempo (buffer cheio)", () => {
+  it("expira o setup SOL mesmo com o índice da vela congelado", () => {
+    const now = Date.now();
+    const m1 = Array.from({ length: 800 }, (_, i) => ({
+      time: now - (800 - i) * 60_000,
+      open: 150,
+      high: 150.1,
+      low: 149.9,
+      close: 150,
+      volume: 50,
+    }));
+    const state = {
+      ...createEngineState(STRATEGY_SOLUSD.id),
+      currentStepIndex: 1,
+      sweepCandleIndex: m1.length - 1, // buffer cheio: o índice não avança
+      sweepConfirmedAt: now - 45 * 60_000,
+      bias: "bullish" as const,
+      sweepDirection: "bullish" as const,
+    };
+    const r = evaluateStrategy(STRATEGY_SOLUSD, state, {
+      now,
+      calendarClean: true,
+      price: 150,
+      candlesByTf: { M1: m1, "1m": m1, M15: [], "15m": [] },
+    });
+    expect(r.invalidated).toBe(true);
+    expect(r.reason).toMatch(/maxCandles/);
+  });
+});
+
+describe("XAU: sweep tem de ser a favor do bias H4", () => {
+  it("rejeita sweep de máximos com bias bullish", () => {
+    const bearishSweep = xauSweepPositive.map((b) => ({
+      ...b,
+      open: 5300 - b.open,
+      high: 5300 - b.low,
+      low: 5300 - b.high,
+      close: 5300 - b.close,
+    }));
+    const state = {
+      ...createEngineState(STRATEGY_XAUUSD.id),
+      currentStepIndex: 2,
+      bias: "bullish" as const,
+      confirmed: [],
+    };
+    const r = evaluateStrategy(STRATEGY_XAUUSD, state, {
+      calendarClean: true,
+      bias: "bullish",
+      price: 2650,
+      candlesByTf: { M15: bearishSweep, M5: xauObFvgPositive },
+    });
+    expect(r.progressed).toBe(false);
+    expect(r.reason).toBe("sweep_against_bias");
   });
 });

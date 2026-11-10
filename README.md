@@ -53,6 +53,7 @@ Um ativo, um playbook, gates SIM/NÃO:
 
 - **XAUUSD — London Structure** — bias H4, sweep/MSS M15, entrada M5, R:R ≥ 2.0, máx. 2 trades, DD 1.5%
 - **SOLUSD — SMC 3-Step** — sweep 15m → ChoCH 1m → FVG Golden Ratio, R:R ≥ 3.0, máx. 3 trades, DD 3%
+- **XAUUSD / SOLUSD — HTF Imbalance Rotation** — primeiro toque numa FVG/OB fresca H4 ou H1 a favor do bias H4 (alerta "armado") → MSS no M5 → SL no extremo do toque + 0,1 ATR M15 → TP na zona oposta / swing H4 (≥ 2R, máx. 4R). Risco 0,5%, máx. 2 sinais/dia, SL máx. 0,5% (XAU) / 1,5% (SOL)
 
 Fluxo: marcar passos → calculadora R:R/size → **AUTORIZADO / ESPERAR / REJEITAR** → journal pré-preenchido.
 
@@ -103,7 +104,17 @@ Tabela `candle_cache` em `trading.db` — restart **não** perde o histórico j�
 
 SQLite (`signals`) — sobrevivem a restart. Consulta: `GET /api/signals` ou página `/signals`.
 
-Email opcional: `ALERT_EMAIL_TO` + `RESEND_API_KEY` ou `ALERT_EMAIL_WEBHOOK`.
+### Entrega de alertas
+
+| Canal | Quando chega | Configuração |
+|--|--|--|
+| Toast + som + notificação do sistema | Página aberta (mesmo em segundo plano) | Clicar "Ativar notificações" no canto superior direito |
+| **Telegram** | Sempre que o `npm run dev` está a correr, mesmo com o browser fechado | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (ver `.env.example`) |
+| Email | Sinais completos | `ALERT_EMAIL_TO` + `RESEND_API_KEY` ou `ALERT_EMAIL_WEBHOOK` |
+
+Testar todos os canais: `curl -X POST http://localhost:3000/api/alerts/test` (a resposta diz se o Telegram foi enviado).
+
+Tipos: **ARMADO** (parte da sequência confirmada, prepara-te) e **SINAL** (PE, SL e TP validados).
 
 Ver também `trading-os/.env.example` (`TWELVE_DATA_API_KEY` obrigatória para XAU).
 

@@ -51,6 +51,8 @@ export interface StrategySession {
   newsImpact?: string[];
   maxCandlesAfterSweep?: number;
   maxCandlesAfterStep1ForChoCH?: number;
+  /** Janela horária (UTC) em que a estratégia pode emitir sinais: [início, fim). */
+  utcHours?: [number, number];
 }
 
 export interface StrategyTimeframes {
@@ -78,6 +80,8 @@ export interface StrategyRisk {
   rrMin: number;
   /** Distância mínima do SL à entrada, em % do preço. Stops mais curtos são ruído, não sinal. */
   minStopPct?: number;
+  /** Distância máxima do SL, em % do preço (protege o travão diário). */
+  maxStopPct?: number;
   partialAt1R?: PartialAt1R;
   slAggressive?: SlAggressive;
   slConservative?: string;
@@ -97,11 +101,17 @@ export interface StrategyKill {
   blockIf: KillBlockIf;
 }
 
+/** Passo após o qual o runner avisa "setup armado" (antes do sinal completo). */
+export interface StrategyAlerts {
+  armOnStep?: string;
+}
+
 export interface StrategyDefinition {
   id: string;
   symbol: string;
   name: string;
   category: string;
+  description?: string;
   timeframes: StrategyTimeframes;
   session: StrategySession;
   sequence: SequenceStep[];
@@ -109,6 +119,7 @@ export interface StrategyDefinition {
   invalidation: string[];
   risk: StrategyRisk;
   kill: StrategyKill;
+  alerts?: StrategyAlerts;
 }
 
 export interface StrategiesFile {
@@ -176,6 +187,15 @@ export interface EngineState {
   sweepDirection?: BiasDirection;
   lastInvalidation?: string;
   lastSignalAt?: number;
+  /** Hora (ms) da vela do sweep. */
+  sweepAt?: number;
+  /** Zona HTF tocada (estratégia de rotação). */
+  zone?: import("./detectors/htfZones").HtfZone;
+  tapAt?: number;
+  /** Gatilhos (sweep/zona) já usados — não voltam a gerar setup. */
+  usedAnchors?: string[];
+  /** Gatilhos do setup em curso; passam a usados quando o setup termina. */
+  pendingAnchors?: string[];
 }
 
 export interface EngineEvaluation {

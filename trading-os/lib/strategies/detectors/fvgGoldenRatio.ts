@@ -69,6 +69,8 @@ export function fvgGoldenRatio(
   const range = extreme - start;
   if (Math.abs(range) < 1e-12) return empty("zero_impulse_range");
 
+  // Primeiro FVG encontrado fora da zona: só é devolvido se não houver nenhum válido mais atrás.
+  let outOfZone: DetectionResult<FvgGoldenRatioDetails> | null = null;
   for (let i = candles.length - 1; i >= 2; i--) {
     const c0 = candles[i];
     const c2 = candles[i - 2];
@@ -88,7 +90,7 @@ export function fvgGoldenRatio(
         : (mid - extreme) / Math.abs(range);
       const inZone = fibLevel >= fibLo && fibLevel <= fibHi;
       if (!inZone) {
-        return {
+        outOfZone ??= {
           detected: false,
           details: {
             direction: "bullish",
@@ -101,6 +103,7 @@ export function fvgGoldenRatio(
             reason: "fvg_out_of_zone",
           },
         };
+        continue;
       }
       if (prefer && prefer !== "neutral" && prefer !== "bullish") continue;
       return {
@@ -135,7 +138,7 @@ export function fvgGoldenRatio(
         : (extreme - mid) / (extreme - start);
       const inZone = level >= fibLo && level <= fibHi;
       if (!inZone) {
-        return {
+        outOfZone ??= {
           detected: false,
           details: {
             direction: "bearish",
@@ -148,6 +151,7 @@ export function fvgGoldenRatio(
             reason: "fvg_out_of_zone",
           },
         };
+        continue;
       }
       if (prefer && prefer !== "neutral" && prefer !== "bearish") continue;
       return {
@@ -166,5 +170,5 @@ export function fvgGoldenRatio(
     }
   }
 
-  return empty("no_fvg");
+  return outOfZone ?? empty("no_fvg");
 }

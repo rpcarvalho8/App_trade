@@ -37,6 +37,12 @@ type AssetStatus = {
 };
 
 type AssetDiag = {
+  strategyId?: string;
+  symbol?: string;
+  name?: string;
+  waitingReason?: string | null;
+  lastArmedAt?: number | null;
+  signalsToday?: number;
   lastEvalAt: number | null;
   idleReason: string | null;
   step: number;
@@ -55,6 +61,27 @@ const STEP_LABELS: Record<string, string> = {
   ob_or_fvg: "OB ou FVG no M5",
   choch_volume: "CHoCH com volume no M1",
   fvg_golden_ratio: "FVG na zona 0,618–0,786",
+  htf_zone_tap: "preço numa FVG/OB fresca H4 ou H1, a favor do bias",
+  ltf_mss: "MSS no M5 dentro da zona",
+};
+
+/** Porque é que o passo actual ainda não confirmou. */
+const WAIT_LABELS: Record<string, string> = {
+  no_zone_tap: "nenhuma zona fresca tocada agora",
+  bias_neutral: "H4 sem BOS claro",
+  no_sweep: "sem sweep nas últimas 3 velas fechadas",
+  sweep_against_bias: "houve sweep, mas contra o bias H4",
+  no_bullish_break: "ainda sem quebra de estrutura",
+  no_bearish_break: "ainda sem quebra de estrutura",
+  choch_no_volume: "CHoCH sem volume suficiente",
+  choch_against_sweep: "CHoCH contra o sweep",
+  no_choch: "sem CHoCH",
+  range_or_phaseB: "H4 em range",
+  news_blackout: "notícia forte em menos de 30 min",
+  fvg_out_of_zone: "FVG fora da zona Fibonacci",
+  no_fvg: "sem FVG",
+  deviation_too_large: "sweep demasiado profundo",
+  no_close_back_inside: "sweep sem fecho de volta",
 };
 
 const REJECT_LABELS: Record<string, string> = {
@@ -69,6 +96,10 @@ const REJECT_LABELS: Record<string, string> = {
   maxCandlesAfterSweep_exceeded: "setup expirou depois do sweep",
   maxCandlesAfterStep1ForChoCH_exceeded: "CHoCH não apareceu a tempo",
   step_maxCandles_exceeded: "passo expirou",
+  stop_too_wide: "SL demasiado largo para o risco diário",
+  zone_broken: "zona partida (M15 fechou para lá dela)",
+  bias_changed: "bias H4 mudou a meio do setup",
+  news_blackout: "notícia forte a meio do setup",
 };
 
 const hhmm = (ts: number | null | undefined) =>
@@ -126,15 +157,18 @@ export default function SignalsPage() {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <AssetCard
-          title="XAUUSD — London Structure"
-          asset={xau}
-          diag={data?.runner?.diag?.XAUUSD}
-          now={data?.now}
-          forceBeta
-        />
-        <AssetCard title="SOLUSD — SMC 3-Step" asset={sol} diag={data?.runner?.diag?.SOLUSD} now={data?.now} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+        {(data?.runner?.strategies || []).map((st: { id: string; symbol: string; name: string; description?: string | null }) => (
+          <AssetCard
+            key={st.id}
+            title={`${st.symbol} · ${st.name}`}
+            subtitle={st.description || undefined}
+            asset={st.symbol === "XAUUSD" ? xau : sol}
+            diag={data?.runner?.diag?.[st.id]}
+            now={data?.now}
+            forceBeta={st.symbol === "XAUUSD"}
+          />
+        ))}
       </div>
 
       <div>
@@ -243,8 +277,13 @@ function DiagBlock({ diag, now }: { diag?: AssetDiag; now?: number }) {
           Passo {Math.min(diag.step + 1, diag.totalSteps)}/{diag.totalSteps}: à espera de{" "}
           <span style={{ color: "#e2e8f0" }}>{STEP_LABELS[diag.nextStepType || ""] || diag.nextStepType || "—"}</span>
           <span style={{ color: C.muted }}> · avaliado às {hhmm(diag.lastEvalAt)}</span>
+          {diag.waitingReason && (
+            <div style={{ color: C.muted, fontSize: 10 }}>Agora: {WAIT_LABELS[diag.waitingReason] || diag.waitingReason}</div>
+          )}
         </div>
       )}
+      {diag.lastArmedAt ? <div style={{ color: C.amber }}>Último setup armado: {hhmm(diag.lastArmedAt)}</div> : null}
+      <div style={{ color: C.muted }}>Sinais hoje: {diag.signalsToday ?? 0}</div>
       <div style={{ color: C.muted }}>Último sinal: {diag.lastSignalAt ? hhmm(diag.lastSignalAt) : "nenhum desde o arranque"}</div>
       {diag.lastReject && (
         <div style={{ color: C.muted }}>
@@ -263,12 +302,14 @@ function DiagBlock({ diag, now }: { diag?: AssetDiag; now?: number }) {
 
 function AssetCard({
   title,
+  subtitle,
   asset,
   diag,
   now,
   forceBeta,
 }: {
   title: string;
+  subtitle?: string;
   asset: AssetStatus;
   diag?: AssetDiag;
   now?: number;
@@ -280,7 +321,10 @@ function AssetCard({
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>{title}</div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 10, color: C.muted, marginTop: 2, maxWidth: 420 }}>{subtitle}</div>}
+        </div>
         {beta && (
           <span
             title={

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 interface MarketAlert {
   id: string;
-  type: "price" | "calendar" | "signal";
+  type: "price" | "calendar" | "signal" | "setup";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;
@@ -19,6 +19,38 @@ const LEVEL_STYLE: Record<string, { border: string; bg: string; accent: string }
 };
 
 const AUTO_DISMISS_MS = 12000;
+/** Ao (re)ligar, mostra sinais e setups que chegaram nos últimos N minutos e ainda não viste. */
+const REPLAY_WINDOW_MS = 30 * 60_000;
+const SEEN_KEY = "tos.alerts.seen";
+
+function loadSeen(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(SEEN_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeen(seen: Set<string>) {
+  try {
+    window.localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-200)));
+  } catch {}
+}
+
+const important = (a: MarketAlert) => a.type === "signal" || a.type === "setup" || a.level === "critical";
+
+/** Notificação do sistema operativo: aparece mesmo com o separador em segundo plano. */
+function systemNotify(a: MarketAlert) {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const n = new Notification(a.title, { body: a.message, tag: a.id, requireInteraction: a.type === "signal" });
+    n.onclick = () => {
+      window.focus();
+      if (a.type === "signal" || a.type === "setup") window.location.href = "/signals";
+    };
+  } catch {}
+}
 
 /** Beep curto via Web Audio API (sem ficheiro externo). */
 function playAlertSound(kind: MarketAlert["type"]) {
@@ -30,6 +62,8 @@ function playAlertSound(kind: MarketAlert["type"]) {
     const tones =
       kind === "signal"
         ? [880, 1174, 880]
+        : kind === "setup"
+          ? [660, 880]
         : kind === "calendar"
           ? [660, 520]
           : [740];
@@ -55,20 +89,35 @@ function playAlertSound(kind: MarketAlert["type"]) {
 export default function AlertToaster() {
   const [toasts, setToasts] = useState<MarketAlert[]>([]);
   const [connected, setConnected] = useState(false);
+  const [notifPerm, setNotifPerm] = useState<string>("unsupported");
   const wsRef = useRef<WebSocket | null>(null);
   const seen = useRef<Set<string>>(new Set());
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    seen.current = loadSeen();
+    if (typeof Notification !== "undefined") setNotifPerm(Notification.permission);
+  }, []);
+
+  const enableNotifications = useCallback(() => {
+    if (typeof Notification === "undefined") return;
+    // O clique também desbloqueia o som (os browsers bloqueiam áudio sem gesto do utilizador).
+    playAlertSound("setup");
+    Notification.requestPermission().then((p) => setNotifPerm(p)).catch(() => {});
+  }, []);
+
   const pushToast = useCallback((a: MarketAlert) => {
     if (seen.current.has(a.id)) return;
     seen.current.add(a.id);
+    saveSeen(seen.current);
     setToasts((prev) => [a, ...prev].slice(0, 5));
-    if (a.type === "signal" || a.level === "critical") {
+    if (important(a)) {
       playAlertSound(a.type);
+      if (document.visibilityState !== "visible" || a.type === "signal") systemNotify(a);
     }
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== a.id));
-    }, a.type === "signal" ? 20000 : AUTO_DISMISS_MS);
+    }, a.type === "signal" ? 60000 : a.type === "setup" ? 30000 : AUTO_DISMISS_MS);
   }, []);
 
   const dismiss = useCallback((id: string) => {
@@ -107,7 +156,12 @@ export default function AlertToaster() {
           if (data.kind === "alert" && data.alert) {
             pushToast(data.alert as MarketAlert);
           } else if (data.kind === "hello" && Array.isArray(data.recent)) {
-            for (const a of data.recent as MarketAlert[]) seen.current.add(a.id);
+            // Antes marcava tudo como visto: um sinal emitido com a página fechada nunca aparecia.
+            const now = Date.now();
+            for (const a of data.recent as MarketAlert[]) {
+              if ((a.type === "signal" || a.type === "setup") && now - a.ts < REPLAY_WINDOW_MS) pushToast(a);
+              else seen.current.add(a.id);
+            }
           }
         } catch {}
       };
@@ -153,12 +207,25 @@ export default function AlertToaster() {
         <span style={{ fontSize: 9, color: "#475569", letterSpacing: 0.5 }}>
           {connected ? "ALERTAS LIVE" : "ALERTAS OFF"}
         </span>
+        {notifPerm === "default" && (
+          <button
+            onClick={enableNotifications}
+            style={{ pointerEvents: "auto", marginLeft: 6, fontSize: 9, color: "#fbbf24", background: "#1f1608", border: "1px solid #78551a", borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}
+          >
+            Ativar notificações
+          </button>
+        )}
+        {notifPerm === "denied" && (
+          <span title="Notificações bloqueadas no browser: ativa-as nas definições do site." style={{ marginLeft: 6, fontSize: 9, color: "#f87171" }}>
+            notificações bloqueadas
+          </span>
+        )}
       </div>
 
       {toasts.map((t) => {
         const st = LEVEL_STYLE[t.level] || LEVEL_STYLE.info;
         const typeLabel =
-          t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : "PREÇO";
+          t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
         return (
           <div
             key={t.id}

@@ -8,6 +8,8 @@ const TF_MS: Record<string, number> = {
   M15: 15 * 60 * 1000,
   M5: 5 * 60 * 1000,
   M1: 60 * 1000,
+  "4h": 4 * 60 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
   "15m": 15 * 60 * 1000,
   "5m": 5 * 60 * 1000,
   "1m": 60 * 1000,
@@ -35,6 +37,14 @@ export class CandleBuffer {
     this.tf = tf;
     this.tfMs = tfToMs(tf);
     this.maxBars = maxBars;
+  }
+
+  /** Junta velas OHLC reais (REST) ao histórico, substituindo as da mesma hora. */
+  merge(candles: Candle[]): void {
+    const map = new Map<number, Candle>();
+    for (const b of this.bars) map.set(b.time, b);
+    for (const c of candles) map.set(c.time, { ...c });
+    this.seed([...map.values()]);
   }
 
   /** Substitui o histórico (ex.: OHLC REST). */

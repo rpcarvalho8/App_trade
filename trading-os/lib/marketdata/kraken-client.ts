@@ -11,7 +11,20 @@ const REST = "https://api.kraken.com/0/public";
 const WS_URL = "wss://ws.kraken.com";
 /** Par Kraken spot SOL/USD */
 export const KRAKEN_PAIR = "SOLUSD";
-export const SOL_TIMEFRAMES = ["15m", "1m"] as const;
+export const SOL_TIMEFRAMES = ["4h", "1h", "15m", "5m", "1m"] as const;
+
+/**
+ * Refresco do OHLC REST por TF (ms). Os ticks só actualizam o preço da vela em formação;
+ * o volume real vem da Kraken. Antes o volume das velas novas era o nº de ticks, que
+ * comparado com o volume real do histórico fazia o ChoCH falhar sempre por "sem volume".
+ */
+const OHLC_REFRESH_MS: Record<string, number> = {
+  "1m": 30_000,
+  "5m": 60_000,
+  "15m": 120_000,
+  "1h": 300_000,
+  "4h": 600_000,
+};
 
 export interface KrakenTick {
   symbol: "SOLUSD";
@@ -30,6 +43,8 @@ interface KrakenState {
   lastSpread: number | null;
   handlers: Set<KrakenTickHandler>;
   pollTimer: NodeJS.Timeout | null;
+  ohlcTimer: NodeJS.Timeout | null;
+  lastOhlcAt: Record<string, number>;
   ws: any;
   pollMs: number;
   useWs: boolean;
@@ -45,6 +60,8 @@ function state(): KrakenState {
       lastSpread: null,
       handlers: new Set(),
       pollTimer: null,
+      ohlcTimer: null,
+      lastOhlcAt: {},
       ws: null,
       pollMs: Number(process.env.SOL_POLL_MS || 10_000),
       useWs: process.env.SOL_USE_WS !== "0",
@@ -65,7 +82,10 @@ async function getJSON(url: string): Promise<any> {
 /** Intervalo OHLC Kraken: 1 | 5 | 15 | 30 | 60 | 240 | 1440 | 10080 | 21600 */
 function krakenInterval(tf: string): number {
   if (tf === "1m" || tf === "M1") return 1;
+  if (tf === "5m" || tf === "M5") return 5;
   if (tf === "15m" || tf === "M15") return 15;
+  if (tf === "1h" || tf === "H1") return 60;
+  if (tf === "4h" || tf === "H4") return 240;
   return 1;
 }
 
@@ -111,9 +131,26 @@ export async function seedSolHistory(): Promise<void> {
     try {
       const candles = await fetchKrakenOhlc(tf);
       s.buffers.get(tf)?.seed(candles);
+      s.lastOhlcAt[tf] = Date.now();
       console.log(`[kraken-client] seed ${tf}: ${candles.length} barras`);
     } catch (e: any) {
       console.warn(`[kraken-client] seed ${tf} falhou:`, e?.message || e);
+    }
+  }
+}
+
+/** Refresca o OHLC real dos TFs cujo intervalo de refresco passou. */
+async function refreshOhlc(): Promise<void> {
+  const s = state();
+  const now = Date.now();
+  for (const tf of SOL_TIMEFRAMES) {
+    if (now - (s.lastOhlcAt[tf] || 0) < OHLC_REFRESH_MS[tf]) continue;
+    s.lastOhlcAt[tf] = now;
+    try {
+      const candles = await fetchKrakenOhlc(tf);
+      s.buffers.get(tf)?.merge(candles);
+    } catch (e: any) {
+      console.warn(`[kraken-client] refresh ${tf} falhou:`, e?.message || e);
     }
   }
 }
@@ -122,7 +159,8 @@ function emitTick(price: number, ts: number, spread?: number): void {
   const s = state();
   s.lastPrice = price;
   if (spread != null) s.lastSpread = spread;
-  const closed = s.buffers.pushTick(price, ts, 1);
+  // Volume 0: o volume real chega pelo refresco OHLC (ver OHLC_REFRESH_MS).
+  const closed = s.buffers.pushTick(price, ts, 0);
   const tick: KrakenTick = {
     symbol: "SOLUSD",
     price,
@@ -225,6 +263,10 @@ export function startKrakenClient(): void {
     pollOnce().catch((e) => console.warn("[kraken-client] poll:", e?.message || e));
   }, s.pollMs);
 
+  s.ohlcTimer = setInterval(() => {
+    refreshOhlc().catch(() => {});
+  }, 15_000);
+
   connectWs().catch(() => {});
   console.log(`[kraken-client] SOLUSD ativo (poll ${s.pollMs}ms + WS=${s.useWs}).`);
 }
@@ -233,6 +275,8 @@ export function stopKrakenClient(): void {
   const s = state();
   if (s.pollTimer) clearInterval(s.pollTimer);
   s.pollTimer = null;
+  if (s.ohlcTimer) clearInterval(s.ohlcTimer);
+  s.ohlcTimer = null;
   try {
     s.ws?.close();
   } catch {}
