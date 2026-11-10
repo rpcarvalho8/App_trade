@@ -5,6 +5,7 @@ import {
   runStrategyCycle,
   detectBiasH4,
   findHtfZones,
+  findDrawLevel,
 } from "../index";
 import type { Candle, EngineContext, StrategyDefinition } from "../types";
 
@@ -180,5 +181,39 @@ describe("HTF Imbalance Rotation (XAUUSD)", () => {
     r = runStrategyCycle(STRATEGY_XAUUSD_ROTATION, state, ctxAt(m5b[m5b.length - 1].time + M5 + 1000, h4, m5b, 103.6));
     expect(r.signal).toBeNull();
     expect(r.evaluations[r.evaluations.length - 1].reason).toBe("stop_too_wide");
+  });
+});
+
+describe("revisões do review", () => {
+  const h4 = h4Series();
+  const now1 = h4[h4.length - 1].time + H4 + 10 * 60_000;
+
+  it("o setup armado cai se o H4 (fechado) virar contra a zona", () => {
+    const r1 = runStrategyCycle(loose, createEngineState(loose.id), ctxAt(now1, h4, m5Series(now1 - 12 * M5, false), 102.95));
+    expect(r1.state.currentStepIndex).toBe(2);
+    const flipped = [...h4, bar(h4[h4.length - 1].time + H4, 102.9, 103, 98.5, 98.8)];
+    const now2 = now1 + H4;
+    const r2 = runStrategyCycle(loose, r1.state, ctxAt(now2, flipped, m5Series(now1 - 12 * M5, false), 98.8));
+    expect(r2.evaluations[0].reason).toBe("bias_changed");
+  });
+
+  it("uma vela H4 ainda em formação não muda o bias", () => {
+    const r1 = runStrategyCycle(loose, createEngineState(loose.id), ctxAt(now1, h4, m5Series(now1 - 12 * M5, false), 102.95));
+    const forming = [...h4, bar(h4[h4.length - 1].time + H4, 102.9, 103, 98.5, 98.8)]; // abre antes de now1, ainda não fechou
+    const r2 = runStrategyCycle(loose, r1.state, ctxAt(now1 + 60_000, forming, m5Series(now1 - 12 * M5, false), 102.95));
+    expect(r2.evaluations[0].reason).not.toBe("bias_changed");
+  });
+
+  it("o TP ignora níveis opostos a menos de rrMin", () => {
+    const swings = [
+      ...flat(T, H4, 5, 100),
+      bar(T + 5 * H4, 100, 101, 99.9, 100.5),
+      ...flat(T + 6 * H4, H4, 5, 100),
+      bar(T + 11 * H4, 100, 110, 99.9, 109),
+      ...flat(T + 12 * H4, H4, 5, 100),
+    ];
+    // risco 1: o máximo a 101 (1R) é ignorado com minDistance 2 → destino 110
+    expect(findDrawLevel("long", 100, [], swings, 2)?.level).toBe(110);
+    expect(findDrawLevel("long", 100, [], swings, 0)!.level).toBeLessThan(102);
   });
 });

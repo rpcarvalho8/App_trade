@@ -199,7 +199,14 @@ async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): P
       continue;
     }
 
-    const ctx: EngineContext = { ...base, sessionOk: sessionOk(strategy, now) };
+    // Fora da janela horária não avança a sequência (nem gasta sweeps/zonas que ainda podem servir).
+    if (!sessionOk(strategy, now)) {
+      const h = strategy.session.utcHours!;
+      d.idleReason = `fora do horário da estratégia (${h[0]}h–${h[1]}h UTC)`;
+      d.lastEvalAt = now;
+      continue;
+    }
+    const ctx: EngineContext = { ...base, sessionOk: true };
     const prevStep = s.states[strategy.id].currentStepIndex;
     const cycle = runStrategyCycle(strategy, s.states[strategy.id], ctx);
     s.states[strategy.id] = cycle.state;
@@ -207,11 +214,14 @@ async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): P
 
     // "Armado": o passo configurado confirmou neste ciclo (e a sequência continua em curso).
     const armType = strategy.alerts?.armOnStep;
-    if (armType && !cycle.signal && ctx.sessionOk) {
+    if (armType && !cycle.signal) {
       const armed = cycle.evaluations.find(
         (e) => e.progressed && !e.invalidated && e.state.confirmed[e.state.confirmed.length - 1]?.type === armType
       );
-      if (armed && armed.state.currentStepIndex > prevStep) {
+      // Só avisa se o setup continua vivo no fim do ciclo (não foi descartado logo a seguir).
+      const lastEval = cycle.evaluations[cycle.evaluations.length - 1];
+      const alive = !lastEval?.invalidated && cycle.state.currentStepIndex >= (armed?.state.currentStepIndex ?? Infinity);
+      if (armed && alive && armed.state.currentStepIndex > prevStep) {
         d.lastArmedAt = now;
         await emitSetupAlert(strategy, armed.state, ctx.price).catch((e) =>
           console.warn("[signal-runner] setup alert:", e?.message || e)

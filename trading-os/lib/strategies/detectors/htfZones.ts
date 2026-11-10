@@ -196,7 +196,9 @@ export function findDrawLevel(
   direction: "long" | "short",
   entry: number,
   zones: HtfZone[],
-  swingCandles: Candle[]
+  swingCandles: Candle[],
+  /** Distância mínima à entrada (ex.: rrMin × risco). Níveis mais perto são ignorados. */
+  minDistance = 0
 ): { level: number; source: string } | null {
   const cands: { level: number; source: string }[] = [];
   for (const z of zones) {
@@ -210,7 +212,8 @@ export function findDrawLevel(
   } else {
     for (const l of lows) if (l.v < entry) cands.push({ level: l.v, source: "swing_low" });
   }
-  if (!cands.length) return null;
-  cands.sort((a, b) => Math.abs(a.level - entry) - Math.abs(b.level - entry));
-  return cands[0];
+  const far = cands.filter((c) => Math.abs(c.level - entry) >= minDistance);
+  if (!far.length) return null;
+  far.sort((a, b) => Math.abs(a.level - entry) - Math.abs(b.level - entry));
+  return far[0];
 }

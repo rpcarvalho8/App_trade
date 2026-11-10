@@ -219,7 +219,9 @@ function evaluateStep(
       };
     }
     case "bias_h4": {
-      const h4 = candlesFor(ctx, strategy.timeframes.bias || "H4");
+      // Só velas H4 fechadas: um fecho provisório não é BOS.
+      const biasTf = strategy.timeframes.bias || "H4";
+      const h4 = closedCandles(candlesFor(ctx, biasTf), biasTf, now);
       const fromCtx = ctx.bias && ctx.bias !== "neutral" ? ctx.bias : null;
       const det = fromCtx
         ? { bias: fromCtx, reason: "context" }
@@ -396,7 +398,14 @@ function evaluateStep(
         findHtfZones(closedCandles(candlesFor(ctx, ztf), ztf, now), normalizeTf(ztf), zoneParams(params, ztf))
       );
       const swingTf = typeof params.swingTimeframe === "string" ? params.swingTimeframe : "H4";
-      const draw = findDrawLevel(direction, entry, allZones, closedCandles(candlesFor(ctx, swingTf), swingTf, now).slice(-80));
+      // Só conta como destino um nível a ≥ rrMin: um obstáculo mais perto não serve de TP.
+      const draw = findDrawLevel(
+        direction,
+        entry,
+        allZones,
+        closedCandles(candlesFor(ctx, swingTf), swingTf, now).slice(-80),
+        risk * strategy.risk.rrMin
+      );
       const cap = num(params.rrCap, 4);
       const fallback = num(params.fallbackRR, 3);
       const sign = direction === "long" ? 1 : -1;
@@ -475,12 +484,26 @@ function gateLost(strategy: StrategyDefinition, state: EngineState, ctx: EngineC
     if (!r.ok) return cs.type === "calendar_clean" ? "news_blackout" : "bias_changed";
     if (cs.type === "bias_h4" && r.bias && cs.details.bias && r.bias !== cs.details.bias) return "bias_changed";
   }
+  // Rotação: a zona armada tem de continuar a favor do bias H4 (fechado).
+  if (state.zone) {
+    const tapStep = strategy.sequence.find((st) => st.type === "htf_zone_tap");
+    if (tapStep && tapStep.params?.requireBiasAlignment !== false && !(ctx.bias && ctx.bias !== "neutral")) {
+      const biasTf = typeof tapStep.params?.biasTimeframe === "string" ? tapStep.params.biasTimeframe : "H4";
+      const now = ctx.now ?? Date.now();
+      const b = detectBiasH4(closedCandles(candlesFor(ctx, biasTf), biasTf, now), true);
+      if (b.bias !== state.zone.direction) return "bias_changed";
+    }
+  }
   return null;
 }
 
 /** Estado limpo que guarda os gatilhos já usados (para o mesmo sweep/zona não disparar duas vezes). */
+/** Motivos que não "gastam" o gatilho: o mesmo sweep/zona pode voltar a ser avaliado. */
+const KEEP_ANCHOR_REASONS = new Set(["outside_session", "news_blackout"]);
+
 function resetState(strategy: StrategyDefinition, prev: EngineState, reason?: string): EngineState {
-  const anchors = [...(prev.usedAnchors || []), ...(prev.pendingAnchors || [])];
+  const keep = reason != null && KEEP_ANCHOR_REASONS.has(reason);
+  const anchors = [...(prev.usedAnchors || []), ...(keep ? [] : prev.pendingAnchors || [])];
   const reset = createEngineState(strategy.id);
   reset.usedAnchors = anchors.slice(-50);
   reset.lastSignalAt = prev.lastSignalAt;
