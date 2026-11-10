@@ -5,7 +5,7 @@
 import { db } from "@/lib/db";
 import { broadcastAlert, type MarketAlert } from "@/lib/alert-ws";
 import { sendSignalEmail } from "@/lib/alert-email";
-import type { EngineSignal } from "@/lib/strategies/types";
+import type { EngineSignal, EngineState, StrategyDefinition } from "@/lib/strategies/types";
 
 export async function ensureSignalsTable(): Promise<void> {
   await db.executeMultiple(`
@@ -56,10 +56,13 @@ export async function persistSignal(signal: EngineSignal): Promise<number> {
 
 function mkAlert(signal: EngineSignal, signalId: number): MarketAlert {
   const dir = signal.direction === "long" ? "LONG ▲" : "SHORT ▼";
+  const d = signal.symbol === "XAUUSD" ? 2 : 3;
+  const sl = signal.stopLoss != null ? signal.stopLoss.toFixed(d) : "—";
+  const tp = signal.takeProfit != null ? signal.takeProfit.toFixed(d) : "—";
   const stepsSummary = signal.confirmedSteps
     .map((s) => `${s.step}:${s.type}`)
     .join(" → ");
-  const entry = signal.entry != null ? signal.entry.toFixed(signal.symbol === "XAUUSD" ? 2 : 4) : "—";
+  const entry = signal.entry != null ? signal.entry.toFixed(signal.symbol === "XAUUSD" ? 2 : 3) : "—";
   const rr = signal.rr.toFixed(2);
   return {
     id: `signal-${signalId}-${signal.emittedAt}`,
@@ -68,7 +71,7 @@ function mkAlert(signal: EngineSignal, signalId: number): MarketAlert {
     level: "critical",
     asset: signal.symbol,
     title: `${signal.symbol} · ${dir} · ${signal.strategyId}`,
-    message: `Entrada ~${entry} | R:R ${rr} (mín ${signal.rrMin}) | ${stepsSummary}`,
+    message: `PE ${entry} | SL ${sl} | TP ${tp} | R:R ${rr} (mín ${signal.rrMin}) | ${stepsSummary}`,
     meta: {
       signalId,
       strategyId: signal.strategyId,
@@ -98,6 +101,46 @@ export async function emitSignalAlert(signal: EngineSignal): Promise<{ id: numbe
     `[signals] #${id} ${signal.symbol} ${signal.direction} rr=${signal.rr.toFixed(2)} steps=${signal.confirmedSteps.length}`
   );
   return { id };
+}
+
+const STEP_TEXT: Record<string, string> = {
+  calendar_clean: "calendário limpo",
+  bias_h4: "bias H4",
+  liquidity_sweep: "sweep de liquidez",
+  mss_cisd: "MSS/CISD M15",
+  ob_or_fvg: "OB/FVG no M5",
+  choch_volume: "CHoCH com volume no M1",
+  fvg_golden_ratio: "FVG na zona 0,618–0,786",
+  htf_zone_tap: "toque numa zona H4/H1",
+  ltf_mss: "MSS no M5 dentro da zona",
+};
+
+/**
+ * Alerta "setup armado": parte da sequência confirmou, falta a entrada.
+ * Serve para estares à frente do gráfico quando o sinal sair (ou entrares tu, com o plano).
+ */
+export async function emitSetupAlert(strategy: StrategyDefinition, st: EngineState, price?: number): Promise<void> {
+  const steps = [...strategy.sequence].sort((a, b) => a.step - b.step);
+  const next = steps[st.currentStepIndex];
+  const d = strategy.symbol === "XAUUSD" ? 2 : 3;
+  const dir = st.bias === "bullish" ? "LONG ▲" : st.bias === "bearish" ? "SHORT ▼" : "";
+  let what = `${st.confirmed.map((c) => STEP_TEXT[String(c.type)] || c.type).join(" + ")} confirmados`;
+  if (st.zone) {
+    const z = st.zone;
+    what = `Preço numa ${z.kind === "fvg" ? "FVG" : "OB"} ${z.tf} ${z.direction === "bullish" ? "de compra" : "de venda"} ${z.low.toFixed(d)}–${z.high.toFixed(d)}`;
+  }
+  const max = next?.params?.maxCandles;
+  const wait = next ? `à espera de ${STEP_TEXT[String(next.type)] || next.type}${typeof max === "number" ? ` (até ${max} velas ${strategy.timeframes.entry})` : ""}` : "";
+  broadcastAlert({
+    id: `setup-${strategy.id}-${Date.now()}`,
+    ts: Date.now(),
+    type: "setup",
+    level: "warning",
+    asset: strategy.symbol,
+    title: `${strategy.symbol} · ARMADO ${dir} · ${strategy.name}`,
+    message: `${what}${price != null ? ` · preço ${price.toFixed(d)}` : ""} · ${wait}`,
+    meta: { strategyId: strategy.id, step: st.currentStepIndex, zone: st.zone ?? null },
+  });
 }
 
 export async function listRecentSignals(limit = 50): Promise<any[]> {

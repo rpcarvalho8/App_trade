@@ -12,7 +12,7 @@ import type { WebSocketServer, WebSocket } from "ws";
 
 export interface MarketAlert {
   id: string;
-  type: "price" | "calendar" | "signal";
+  type: "price" | "calendar" | "signal" | "setup";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;
@@ -95,6 +95,16 @@ export function broadcastAlert(alert: MarketAlert): void {
     } catch {}
   }
   console.log(`[Alerts] ${alert.level.toUpperCase()} · ${alert.title} — ${alert.message}`);
+
+  // Push para o telemóvel: chega mesmo com o browser fechado (o toast só aparece com a página aberta).
+  import("@/lib/alert-telegram")
+    .then(({ sendTelegramAlert }) => sendTelegramAlert(alert))
+    .catch((e) => console.warn("[Alerts] Telegram falhou:", e?.message || e));
+}
+
+/** Clientes WebSocket ligados agora (0 = ninguém vê os toasts). */
+export function connectedClients(): number {
+  return state().clients.size;
 }
 
 export function recentAlerts(): MarketAlert[] {
