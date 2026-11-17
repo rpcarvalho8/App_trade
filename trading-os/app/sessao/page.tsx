@@ -126,6 +126,8 @@ export default function SessaoPage() {
   const [ctx, setCtx] = useState<SessionCtx | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  /** Passo cujo guião está aberto além do passo actual (clique no nome do passo). */
+  const [openStepId, setOpenStepId] = useState<string | null>(null);
 
   const applyCtx = (d: SessionCtx) => {
     setCtx(d);
@@ -335,6 +337,31 @@ export default function SessaoPage() {
     setChecks((c) => ({ ...c, [id]: v }));
   };
 
+  // Passo actual: o primeiro que ainda não está a SIM (é o que as teclas S/N marcam).
+  const activeStep = steps.find((s) => autoChecks[s.id] !== "yes") ?? null;
+
+  // Teclado: S = sim, N = não no passo actual; U = desfaz a última marcação manual.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if ((k === "s" || k === "n") && activeStep) {
+        e.preventDefault();
+        setCheck(activeStep.id, k === "s" ? "yes" : "no");
+      } else if (k === "u") {
+        const last = [...steps].reverse().find((s) => checks[s.id] === "yes" || checks[s.id] === "no");
+        if (last) {
+          e.preventDefault();
+          setCheck(last.id, "pending");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const saveTrade = async () => {
     if (!canSave) {
       setSaveMsg(whyNot || "Ainda não podes gravar.");
@@ -414,48 +441,40 @@ export default function SessaoPage() {
   const price = ctx?.prices?.[asset];
 
   const verdictUI = {
-    AUTHORIZED: { label: "AUTORIZADO A ENTRAR", color: C.green, bg: "#052e16", hint: "Todos os passos estão verdes. Entra na corretora e carrega em Guardar no journal — o registo é criado já com estes dados." },
-    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03", hint: "Marca os passos por ordem e preenche entrada e stop. A barra de baixo diz o que falta." },
-    REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a", hint: "Um passo falhou. Não há trade. Esperas o próximo setup deste activo." },
-    CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a", hint: account?.blocked ? (account.reason || "Travão diário da conta atingido.") : day?.hitMaxTrades ? "Já fizeste o máximo de trades deste activo hoje." : day?.hitDD ? "O limite de perdas do dia neste activo foi atingido." : mentalClosed ? "Sono, stress ou nota mental fora das regras." : "A sessão deste activo está encerrada." },
+    AUTHORIZED: { label: "AUTORIZADO", color: C.green, bg: "#052e16" },
+    WAIT: { label: "ESPERAR", color: C.amber, bg: "#451a03" },
+    REJECT: { label: "REJEITAR", color: C.red, bg: "#3b1a1a" },
+    CLOSED: { label: "SESSÃO FECHADA", color: C.red, bg: "#3b1a1a" },
   }[verdict];
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 88 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 2 }}>TRADING OS</div>
-          <div style={{ fontSize: 22, fontWeight: 600, color: C.accent }}>Mesa de Operação</div>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Um activo, um guião. Cada passo diz o que fazer no gráfico e quando marcar SIM ou NÃO.</div>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {(["XAUUSD", "SOLUSD"] as SessionAsset[]).map((a) => (
-            <button
-              key={a}
-              onClick={() => switchAsset(a)}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 6,
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: "pointer",
-                border: `1px solid ${asset === a ? (a === "XAUUSD" ? C.amber : C.purple) : C.border}`,
-                background: asset === a ? (a === "XAUUSD" ? "#3b2a05" : "#2e1064") : C.card,
-                color: asset === a ? (a === "XAUUSD" ? C.amber : C.purple) : C.secondary,
-              }}
-            >
-              {a}
-            </button>
-          ))}
-          <button onClick={() => load(true)} style={{ background: C.elevated, color: C.secondary, border: `1px solid ${C.border}`, padding: "8px 12px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
-            Atualizar
-          </button>
-        </div>
-      </div>
+  const lbl: React.CSSProperties = { fontSize: 9, color: C.muted, letterSpacing: 1, marginBottom: 3 };
+  const cell: React.CSSProperties = { display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 14px", borderLeft: `1px solid ${C.border}` };
+  const dp = asset === "XAUUSD" ? 2 : 4;
 
-      {/* Estratégia: os passos da lista são os da estratégia do motor escolhida */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>ESTRATÉGIA</span>
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Cabeçalho: activo + estratégia */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 18, fontWeight: 600, color: C.accent, marginRight: 6 }}>Mesa</div>
+        {(["XAUUSD", "SOLUSD"] as SessionAsset[]).map((a) => (
+          <button
+            key={a}
+            onClick={() => switchAsset(a)}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              border: `1px solid ${asset === a ? (a === "XAUUSD" ? C.amber : C.purple) : C.border}`,
+              background: asset === a ? (a === "XAUUSD" ? "#3b2a05" : "#2e1064") : C.card,
+              color: asset === a ? (a === "XAUUSD" ? C.amber : C.purple) : C.secondary,
+            }}
+          >
+            {a}
+          </button>
+        ))}
+        <span style={{ width: 1, height: 22, background: C.border, margin: "0 4px" }} />
         {playbooksForAsset(asset).map((p) => (
           <button
             key={p.strategyId}
@@ -473,469 +492,308 @@ export default function SessaoPage() {
             {p.title}
           </button>
         ))}
-        {fromSignal && (
-          <span style={{ fontSize: 11, color: C.green, marginLeft: 8 }}>
-            Carregado do sinal #{fromSignal.id}: os passos do motor já vêm a SIM. Falta confirmar os manuais.
-          </span>
-        )}
+        <button onClick={() => load(true)} title="Actualizar preço, calendário e limites" style={{ marginLeft: "auto", background: C.elevated, color: C.secondary, border: `1px solid ${C.border}`, padding: "6px 12px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
+          ↻ Actualizar
+        </button>
       </div>
 
+      {fromSignal && (
+        <div style={{ fontSize: 11, color: C.green }}>
+          Carregado do sinal #{fromSignal.id}: os passos do motor já vêm a SIM. Falta confirmar os manuais.
+        </div>
+      )}
       {pb.status === "observacao" && (
-        <div style={{ background: "#2e1064", border: `1px solid ${C.purple}55`, color: "#ddd6fe", padding: "10px 14px", borderRadius: 8, fontSize: 12, lineHeight: 1.5 }}>
-          {pb.statusNote}
-        </div>
+        <div style={{ background: "#2e1064", border: `1px solid ${C.purple}55`, color: "#ddd6fe", padding: "8px 12px", borderRadius: 8, fontSize: 12, lineHeight: 1.5 }}>{pb.statusNote}</div>
       )}
-
       {err && (
-        <div style={{ background: "#3b1a1a", border: `1px solid ${C.red}55`, color: "#fca5a5", padding: "10px 14px", borderRadius: 8, fontSize: 12 }}>
-          Falha a carregar contexto de sessão: {err}. Os gates manuais continuam utilizáveis.
+        <div style={{ background: "#3b1a1a", border: `1px solid ${C.red}55`, color: "#fca5a5", padding: "8px 12px", borderRadius: 8, fontSize: 12 }}>
+          Falha a carregar o contexto: {err}. Os passos manuais continuam utilizáveis.
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr 1fr", gap: 12 }}>
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>GUIÃO DE HOJE</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>{pb.title}</div>
-          <div style={{ fontSize: 11, color: C.secondary, marginTop: 4, lineHeight: 1.5 }}>{pb.tagline}</div>
-          <div style={{ fontSize: 10, color: C.muted, marginTop: 10 }}>{pb.sessionWindow}</div>
-          <div style={{ fontSize: 10, color: C.accent, marginTop: 4 }}>{pb.timeframes}</div>
-          <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11 }}>
-            <span style={{ color: C.secondary }}>R:R ≥ <b style={{ color: C.amber }}>{pb.minRR}</b></span>
-            <span style={{ color: C.secondary }}>Max trades <b style={{ color: "#e2e8f0" }}>{pb.maxTrades}</b></span>
-            <span style={{ color: C.secondary }}>DD <b style={{ color: C.red }}>{pb.maxDailyDD}%</b></span>
+      {/* Faixa de estado: tudo o que decide se podes operar, numa linha */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch", background: C.card, border: `1px solid ${sessionClosed ? C.red + "66" : C.border}`, borderRadius: 8, padding: "10px 0", rowGap: 10 }}>
+        <div style={{ ...cell, borderLeft: "none" }}>
+          <div style={lbl}>{asset}</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0" }}>{loading ? "…" : fmtPrice(price, asset)}</div>
+        </div>
+        <div style={cell} title={upcoming.slice(0, 5).map((e) => `${e.country} ${e.title}${e.minutesUntil != null ? ` · ${Math.round(e.minutesUntil)} min` : ""}`).join("\n")}>
+          <div style={lbl}>NOTÍCIAS</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: blackout ? C.red : C.green }}>{blackout ? "BLOQUEIO 30 min" : "Livre"}</div>
+          <div style={{ fontSize: 9, color: C.muted }}>
+            {upcoming[0] ? `${upcoming[0].country} ${upcoming[0].title.slice(0, 22)}${upcoming[0].minutesUntil != null ? ` · ${Math.round(upcoming[0].minutesUntil)}m` : ""}` : "nada forte hoje"}
           </div>
         </div>
-
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>CONTEXTO</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: "#e2e8f0" }}>{loading ? "…" : fmtPrice(price, asset)}</div>
-          <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{asset} spot</div>
-          {asset === "SOLUSD" && ctx?.prices?.BTCUSD != null && (
-            <div style={{ fontSize: 10, color: C.secondary, marginTop: 6 }}>BTC {fmtPrice(ctx.prices.BTCUSD, "XAUUSD")}</div>
-          )}
-          <div style={{ marginTop: 10, fontSize: 11, color: blackout ? C.red : C.green }}>
-            {blackout ? "BLOQUEIO — notícia forte nos próximos 30 min" : "Calendário: sem notícia forte nos próximos 30 min"}
+        <div style={cell}>
+          <div style={lbl}>HOJE ({asset.slice(0, 3)})</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: day?.closed ? C.red : "#e2e8f0" }}>
+            {day?.count ?? 0}/{pb.maxTrades} trades · {day?.consecutiveLosses ?? 0}/{pb.pauseAfterLosses} perdas
           </div>
-          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-            {upcoming.slice(0, 3).map((e, i) => (
-              <div key={i} style={{ fontSize: 10, color: C.secondary }}>
-                <span style={{ color: C.amber }}>{e.country}</span> {e.title}
-                {e.minutesUntil != null && (
-                  <span style={{ color: C.muted }}> · {Math.round(e.minutesUntil)} min</span>
-                )}
-              </div>
-            ))}
-            {upcoming.length === 0 && !loading && (
-              <div style={{ fontSize: 10, color: C.muted }}>Sem notícias fortes restantes hoje.</div>
-            )}
+          <div style={{ fontSize: 9, color: Number(day?.pnl || 0) >= 0 ? C.green : C.red }}>
+            P&amp;L {Number(day?.pnl || 0).toFixed(2)}
+            {account ? ` · conta ${account.dayLossPct.toFixed(2)}%/${RISK_RULES.maxDailyLossPct}%` : ""}
           </div>
         </div>
-
-        <div style={{ background: sessionClosed ? "#3b1a1a" : C.card, border: `1px solid ${sessionClosed ? C.red + "66" : C.border}`, borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>LIMITE DO DIA</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
-            <div>
-              <div style={{ fontSize: 9, color: C.muted }}>TRADES</div>
-              <div style={{ color: day?.hitMaxTrades ? C.red : "#e2e8f0", fontWeight: 700 }}>{day?.count ?? 0}/{pb.maxTrades}</div>
+        {prop && (
+          <div style={cell}>
+            <div style={lbl}>{prop.account.toUpperCase()}{prop.phase ? ` · ${prop.phase.toUpperCase()}` : ""}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: prop.breached ? C.red : "#e2e8f0" }}>
+              dia <span style={{ color: prop.dailyRemaining != null && prop.dailyLimit && prop.dailyRemaining < prop.dailyLimit * 0.5 ? C.amber : C.green }}>{prop.dailyRemaining?.toFixed(0) ?? "—"}</span>
+              {" · "}total {prop.totalRemaining?.toFixed(0) ?? "—"}
             </div>
-            <div>
-              <div style={{ fontSize: 9, color: C.muted }}>PERDAS SEGUIDAS</div>
-              <div style={{ color: day?.needPause ? C.red : "#e2e8f0", fontWeight: 700 }}>{day?.consecutiveLosses ?? 0}/{pb.pauseAfterLosses}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 9, color: C.muted }}>PERDA DO DIA (conta)</div>
-              <div style={{ color: account?.blocked || day?.hitDD ? C.red : "#e2e8f0", fontWeight: 700 }}>
-                {account ? `${account.dayLossPct.toFixed(2)}% / ${RISK_RULES.maxDailyLossPct}%` : "define o capital"}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 9, color: C.muted }}>P&amp;L DIA</div>
-              <div style={{ color: Number(day?.pnl || 0) >= 0 ? C.green : C.red, fontWeight: 700 }}>${Number(day?.pnl || 0).toFixed(0)}</div>
+            <div style={{ fontSize: 9, color: prop.passed ? C.green : C.muted }}>
+              target {prop.profit.toFixed(2)}/{prop.target?.toFixed(0) ?? "—"} ({(prop.progressPct ?? 0).toFixed(1)}%)
             </div>
           </div>
-          {day?.needPause && !day?.closed && (
-            <div style={{ fontSize: 10, color: C.amber, marginTop: 10 }}>Pausa de {pb.pauseMinutes} min depois de {pb.pauseAfterLosses} perdas seguidas.</div>
-          )}
+        )}
+        <div style={cell}>
+          <div style={lbl}>ESTADO</div>
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <input aria-label="Horas de sono" title="Horas de sono" type="number" step="0.5" value={sleepHours} onChange={(e) => setSleepHours(e.target.value)} style={{ width: 46, padding: "2px 4px", fontSize: 11 }} />
+            <span style={{ fontSize: 9, color: C.muted }}>h</span>
+            <input aria-label="Stress 1 a 10" title="Stress 1–10" type="number" min="1" max="10" value={stress} onChange={(e) => setStress(e.target.value)} style={{ width: 40, padding: "2px 4px", fontSize: 11 }} />
+            <span style={{ fontSize: 9, color: C.muted }}>/10</span>
+            <select aria-label="Nota mental" title="Nota mental" value={grade} onChange={(e) => setGrade(e.target.value)} style={{ padding: "2px 4px", fontSize: 11 }}>
+              {["A", "B", "C", "D"].map((g) => <option key={g}>{g}</option>)}
+            </select>
+          </div>
+          {mentalClosed && <div style={{ fontSize: 9, color: C.red }}>sono &lt; 6h, stress &gt; 7 ou nota D</div>}
+        </div>
+        <div style={{ ...cell, marginLeft: "auto", paddingRight: 12 }}>
+          <div style={{ background: verdictUI.bg, color: verdictUI.color, border: `1px solid ${verdictUI.color}66`, borderRadius: 6, padding: "6px 12px", fontWeight: 800, fontSize: 13, letterSpacing: 1, textAlign: "center" }}>
+            {verdictUI.label}
+          </div>
         </div>
       </div>
 
-      <div style={{ background: verdictUI.bg, border: `1px solid ${verdictUI.color}55`, borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: verdictUI.color, letterSpacing: 1 }}>{verdictUI.label}</div>
-          <div style={{ fontSize: 12, color: C.secondary, marginTop: 4 }}>{verdictUI.hint}</div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => { setChecks(emptyChecks(pb)); setSaveMsg(""); setSavedId(null); }}
-            style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border}`, padding: "8px 14px", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
-          >
-            Limpar passos
-          </button>
-          <button
-            onClick={saveTrade}
-            disabled={saving || !canSave}
-            title={whyNot || "Grava este trade no journal"}
-            style={{
-              background: canSave ? "#14532d" : C.elevated,
-              color: canSave ? C.green : C.muted,
-              border: `1px solid ${canSave ? C.green : C.border}`,
-              padding: "10px 18px",
-              borderRadius: 6,
-              fontSize: 13,
-              fontWeight: 800,
-              cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
-              opacity: canSave ? 1 : 0.85,
-            }}
-          >
-            {saving ? "A guardar…" : "Guardar no journal"}
-          </button>
-        </div>
-      </div>
-
-      {(saveMsg || savedId) && (
-        <div style={{
-          background: savedId ? "#052e16" : "#3b1a1a",
-          border: `1px solid ${savedId ? C.green + "55" : C.red + "55"}`,
-          color: savedId ? C.green : "#fca5a5",
-          padding: "10px 14px",
-          borderRadius: 8,
-          fontSize: 12,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-        }}>
-          <span>{saveMsg}{savedId ? ` (#${savedId})` : ""}</span>
-          {savedId && (
-            <Link href="/journal" style={{ color: C.accent, fontSize: 12 }}>
-              Abrir journal (capturas e revisão) →
-            </Link>
-          )}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 16 }}>
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 14 }}>LISTA DE PASSOS — SÓ AVANÇAS DEPOIS DE MARCAR SIM NO ANTERIOR</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(320px, 1fr)", gap: 12, alignItems: "start" }}>
+        {/* Checklist: uma linha por passo; só o passo actual mostra o guião */}
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5 }}>PASSOS · {pb.timeframes}</div>
+            <div style={{ fontSize: 9, color: C.muted }}>
+              teclado: <b style={{ color: C.green }}>S</b> sim · <b style={{ color: C.red }}>N</b> não · <b style={{ color: C.secondary }}>U</b> desfazer
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {steps.map((step, i) => {
               const locked = i > 0 && autoChecks[steps[i - 1].id] !== "yes";
               const val = autoChecks[step.id];
+              const isActive = activeStep?.id === step.id;
+              const expanded = isActive || openStepId === step.id;
               const newsLockedYes = step.kind === "news" && blackout;
+              const fromEngine = !!fromSignal && !!step.engineStep && val === "yes";
               return (
                 <div
                   key={step.id}
                   style={{
-                    opacity: locked ? 0.4 : 1,
-                    border: `1px solid ${val === "yes" ? C.green + "55" : val === "no" ? C.red + "55" : C.border}`,
-                    background: val === "yes" ? "#052e1622" : val === "no" ? "#3b1a1a22" : C.elevated,
-                    borderRadius: 8,
-                    padding: 12,
+                    opacity: locked ? 0.45 : 1,
+                    border: `1px solid ${isActive ? C.accent + "88" : val === "yes" ? C.green + "44" : val === "no" ? C.red + "55" : C.border}`,
+                    background: val === "yes" ? "#052e1622" : val === "no" ? "#3b1a1a33" : isActive ? "#0f4c3a22" : C.elevated,
+                    borderRadius: 6,
+                    padding: "6px 10px",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                    <div style={{ display: "flex", gap: 10, minWidth: 0 }}>
-                      <div style={{
-                        width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
-                        border: `1px solid ${val === "yes" ? C.green : val === "no" ? C.red : C.accent}`,
-                        color: val === "yes" ? C.green : val === "no" ? C.red : C.accent,
-                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700,
-                      }}>{i + 1}</div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.35 }}>{step.label}</div>
-                        {fromSignal && step.engineStep && val === "yes" ? (
-                          <div style={{ fontSize: 11, color: C.green, marginTop: 4 }}>✓ Confirmado pelo motor no sinal #{fromSignal.id}. Podes marcar NÃO se o gráfico da corretora não concordar.</div>
-                        ) : (<>
-                        <div style={{ fontSize: 10, color: C.accent, marginTop: 6 }}>Onde: {step.chart}</div>
-                        <div style={{ fontSize: 12, color: C.secondary, marginTop: 6, lineHeight: 1.55 }}>
-                          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>O que fazer. </span>{step.do}
-                        </div>
-                        <div style={{ fontSize: 11, color: C.green, marginTop: 8, lineHeight: 1.5 }}>
-                          <span style={{ fontWeight: 700 }}>Marca SIM se: </span>{step.yesIf}
-                        </div>
-                        <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4, lineHeight: 1.5 }}>
-                          <span style={{ fontWeight: 700 }}>Marca NÃO se: </span>{step.noIf}
-                        </div>
-                        </>)}
-                        {newsLockedYes && <div style={{ fontSize: 11, color: C.red, marginTop: 8 }}>Bloqueado: há uma notícia de alto impacto nos próximos 30 minutos.</div>}
-                        {step.kind === "rr" && rr != null && (
-                          <div style={{ fontSize: 11, color: rrOk ? C.green : C.red, marginTop: 8 }}>
-                            Resultado da calculadora: 1:{rr.toFixed(2)} {rrOk ? "(atinge o mínimo)" : `(abaixo do mínimo ${pb.minRR})`}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{
+                      width: 20, height: 20, borderRadius: "50%", flexShrink: 0, fontSize: 10, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      border: `1px solid ${val === "yes" ? C.green : val === "no" ? C.red : C.accent}`,
+                      color: val === "yes" ? C.green : val === "no" ? C.red : C.accent,
+                    }}>{val === "yes" ? "✓" : val === "no" ? "✕" : i + 1}</span>
+                    <button
+                      onClick={() => setOpenStepId((o) => (o === step.id ? null : step.id))}
+                      style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", color: "#e2e8f0", fontSize: 12.5, fontWeight: isActive ? 600 : 500 }}
+                    >
+                      {step.label}
+                      {fromEngine && <span style={{ color: C.green, fontSize: 10, fontWeight: 400 }}> · motor ✓</span>}
+                      {step.kind === "rr" && rr != null && <span style={{ color: rrOk ? C.green : C.red, fontSize: 10, fontWeight: 400 }}> · 1:{rr.toFixed(2)}</span>}
+                      {newsLockedYes && <span style={{ color: C.red, fontSize: 10, fontWeight: 400 }}> · notícia em ≤30 min</span>}
+                    </button>
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                       {(["yes", "no"] as Check[]).map((opt) => (
                         <button
                           key={opt}
                           disabled={locked || (opt === "yes" && newsLockedYes)}
                           onClick={() => setCheck(step.id, val === opt ? "pending" : opt)}
+                          title={opt === "yes" ? "Sim (S)" : "Não (N)"}
                           style={{
-                            padding: "5px 10px",
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 700,
+                            width: 30, padding: "3px 0", borderRadius: 4, fontSize: 11, fontWeight: 700,
                             cursor: locked ? "not-allowed" : "pointer",
                             border: `1px solid ${opt === "yes" ? C.green : C.red}`,
                             background: val === opt ? (opt === "yes" ? "#14532d" : "#7f1d1d") : "transparent",
                             color: opt === "yes" ? C.green : C.red,
                           }}
                         >
-                          {opt === "yes" ? "SIM" : "NÃO"}
+                          {opt === "yes" ? "S" : "N"}
                         </button>
                       ))}
                     </div>
                   </div>
+                  {expanded && !fromEngine && (
+                    <div style={{ margin: "6px 0 2px 30px", fontSize: 11.5, lineHeight: 1.5 }}>
+                      <div style={{ color: C.accent, fontSize: 10 }}>Onde: {step.chart}</div>
+                      <div style={{ color: C.secondary, marginTop: 3 }}>{step.do}</div>
+                      <div style={{ color: C.green, marginTop: 3 }}><b>SIM se:</b> {step.yesIf}</div>
+                      <div style={{ color: "#fca5a5", marginTop: 2 }}><b>NÃO se:</b> {step.noIf}</div>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 10, color: C.muted }}>
+              {pb.sessionWindow} · R:R ≥ {pb.minRR} · máx. {pb.maxTrades} trades · DD {pb.maxDailyDD}%
+            </div>
+            <button
+              onClick={() => { setChecks(emptyChecks(pb)); setSaveMsg(""); setSavedId(null); }}
+              style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border}`, padding: "4px 10px", borderRadius: 4, fontSize: 11, cursor: "pointer" }}
+            >
+              Limpar passos
+            </button>
+          </div>
+          <details style={{ marginTop: 10, fontSize: 11 }}>
+            <summary style={{ cursor: "pointer", color: C.secondary }}>Gestão depois de entrares e quando sair</summary>
+            <div style={{ marginTop: 6 }}>
+              {pb.management.map((m) => <div key={m} style={{ color: C.secondary, lineHeight: 1.6 }}>• {m}</div>)}
+              <div style={{ fontSize: 9, color: C.red, letterSpacing: 1.5, margin: "8px 0 4px" }}>SAI / NÃO ENTRES SE</div>
+              {pb.invalidation.map((m) => <div key={m} style={{ color: "#fca5a5", lineHeight: 1.6 }}>• {m}</div>)}
+            </div>
+          </details>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 12 }}>CALCULADORA R:R / SIZE</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>DIRECÇÃO</div>
-                <select value={direction} onChange={(e) => setDirection(e.target.value as "LONG" | "SHORT")} style={{ width: "100%" }}>
-                  <option value="LONG">LONG</option>
-                  <option value="SHORT">SHORT</option>
-                </select>
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>RISCO %</div>
-                <input type="number" step="0.1" value={riskPct} onChange={(e) => setRiskPct(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>ENTRADA</div>
-                <input type="number" step="any" value={entry} onChange={(e) => setEntry(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>STOP LOSS</div>
-                <input type="number" step="any" value={sl} onChange={(e) => setSl(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>TAKE PROFIT</div>
-                <input type="number" step="any" value={tp} onChange={(e) => setTp(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL DA CONTA ({acct ? `${acct.name} · ${KIND_LABEL[acct.kind]} · ${acct.currency}` : "sem conta"})</div>
-                <input type="number" step="1" value={equity} placeholder="ex.: 142" onChange={(e) => {
-                  setEquity(e.target.value);
-                }} onBlur={(e) => { saveEquity(e.target.value); load(false); }} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>
-                  USD POR 1 {acct?.currency || "UNIDADE DA CONTA"}{acct?.currency === "EUR" && eurusd ? " · automático (BCE)" : ""}
-                </div>
-                <input type="number" step="0.01" value={usdPerUnit} onChange={(e) => {
-                  setUsdPerUnit(e.target.value);
-                  writeLocal("tos_usd_per_unit", e.target.value);
-                }} style={{ width: "100%" }} />
-              </div>
-              <div style={{ display: "flex", alignItems: "flex-end" }}>
-                <button
-                  onClick={() => suggestedTp != null && setTp(suggestedTp.toFixed(asset === "XAUUSD" ? 2 : 4))}
-                  disabled={suggestedTp == null}
-                  style={{ width: "100%", background: C.elevated, color: suggestedTp == null ? C.muted : C.accent, border: `1px solid ${C.border}`, padding: "8px 10px", borderRadius: 6, fontSize: 11, cursor: suggestedTp == null ? "not-allowed" : "pointer" }}
-                >
-                  TP a {Math.max(RISK_RULES.targetRR, pb.minRR)}R{suggestedTp != null ? ` → ${fmtPrice(suggestedTp, asset)}` : ""}
-                </button>
-              </div>
-            </div>
-            {prop && (
-              <div style={{ marginTop: 10, background: C.elevated, border: `1px solid ${prop.breached ? C.red : propBlock ? C.amber : C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
-                <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1, marginBottom: 6 }}>
-                  REGRAS {prop.account.toUpperCase()}{prop.phase ? ` · ${prop.phase.toUpperCase()}` : ""}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-                  {prop.dailyRemaining != null && (
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 9 }}>PERDA DIÁRIA · FALTAM</div>
-                      <div style={{ color: prop.dailyRemaining <= 0 ? C.red : prop.dailyLimit && prop.dailyRemaining < prop.dailyLimit * 0.5 ? C.amber : C.green, fontWeight: 600, fontSize: 14 }}>
-                        {prop.dailyRemaining.toFixed(2)} <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}>de {prop.dailyLimit?.toFixed(2)}</span>
-                      </div>
-                      <div style={{ color: C.muted, fontSize: 9 }}>mínimo hoje {prop.dailyFloor?.toFixed(2)} · início {prop.dayStart.toFixed(2)}</div>
-                    </div>
-                  )}
-                  {prop.totalRemaining != null && (
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 9 }}>PERDA TOTAL · FALTAM</div>
-                      <div style={{ color: prop.totalRemaining <= 0 ? C.red : C.secondary, fontWeight: 600, fontSize: 14 }}>
-                        {prop.totalRemaining.toFixed(2)} <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}>de {prop.totalLimit?.toFixed(2)}</span>
-                      </div>
-                      <div style={{ color: C.muted, fontSize: 9 }}>saldo mínimo {prop.totalFloor?.toFixed(2)}</div>
-                    </div>
-                  )}
-                  {prop.target != null && (
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 9 }}>PROFIT TARGET</div>
-                      <div style={{ color: prop.passed ? C.green : C.secondary, fontWeight: 600, fontSize: 14 }}>
-                        {prop.profit.toFixed(2)} <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}>de {prop.target.toFixed(2)} ({(prop.progressPct ?? 0).toFixed(1)}%)</span>
-                      </div>
-                    </div>
-                  )}
-                  {prop.maxRiskMoney != null && (
-                    <div>
-                      <div style={{ color: C.muted, fontSize: 9 }}>RISCO MÁX. NESTA TRADE</div>
-                      <div style={{ color: propBlock ? C.red : C.secondary, fontWeight: 600, fontSize: 14 }}>
-                        {prop.maxRiskMoney.toFixed(2)}
-                        {size?.ok ? <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}> · esta arrisca {size.actualRisk.toFixed(2)}</span> : null}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {(prop.reason || propBlock) && <div style={{ color: prop.breached || propBlock ? C.red : C.green, marginTop: 6 }}>{propBlock || prop.reason}</div>}
-                <div style={{ color: C.muted, fontSize: 9, marginTop: 6 }}>
-                  O capital actualiza-se sozinho com o P&L líquido das trades que fechas no journal. Se divergir do dashboard, corrige no campo Capital.
-                </div>
-              </div>
-            )}
-            <AccountsPanel accounts={accounts} asset={asset} onChange={setAccounts} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
-              <div style={{ background: C.elevated, borderRadius: 6, padding: 10, border: `1px solid ${rrOk ? C.green + "44" : C.border}` }}>
-                <div style={{ fontSize: 9, color: C.muted }}>R:R</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: rr == null ? C.muted : rrOk ? C.green : C.red }}>
-                  {rr == null ? "—" : `1:${rr.toFixed(2)}`}
-                </div>
-                <div style={{ fontSize: 9, color: C.muted }}>mínimo {pb.minRR}</div>
-              </div>
-              <div style={{ background: C.elevated, borderRadius: 6, padding: 10, border: `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 9, color: C.muted }}>LOTE ({spec.lotLabel})</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: size == null ? C.muted : size.ok ? "#e2e8f0" : C.red }}>
-                  {size == null ? "—" : size.ok ? size.lots.toLocaleString("pt-PT", { maximumFractionDigits: 2 }) : "BLOQUEADO"}
-                </div>
-                <div style={{ fontSize: 9, color: C.muted }}>
-                  {size == null
-                    ? `${nRisk}% de ${nEquity || 0}`
-                    : size.ok
-                      ? `risco ${size.actualRisk.toFixed(2)} (${nRisk}% = ${size.riskMoney.toFixed(2)})`
-                      : `lote mín. arrisca ${size.minLotRiskPct.toFixed(1)}%`}
-                </div>
-              </div>
-            </div>
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>RESULTADO AO GRAVAR</div>
-              <div style={{ display: "grid", gridTemplateColumns: outcome === "RUNNING" ? "1fr" : "1fr 1fr 1fr", gap: 8 }}>
-                <div>
-                  <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>ESTADO</div>
-                  <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} style={{ width: "100%" }}>
-                    <option value="RUNNING">Ainda em curso</option>
-                    <option value="WIN">Ganho</option>
-                    <option value="LOSS">Perda</option>
-                    <option value="BE">Break-even</option>
-                  </select>
-                </div>
-                {outcome !== "RUNNING" && (
-                  <>
-                    <div>
-                      <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>SAÍDA</div>
-                      <input type="number" step="any" value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} style={{ width: "100%" }} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>P&amp;L ($)</div>
-                      <input type="number" step="any" value={pnl} onChange={(e) => setPnl(e.target.value)} style={{ width: "100%" }} />
-                    </div>
-                  </>
-                )}
-              </div>
-              <div style={{ fontSize: 10, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
-                Grava-se {asset}, {pb.setupName}, {direction}, entrada/stop/alvo e rácio. «Seguiu o plano?» e capturas respondes no journal ao fechar a trade.
-              </div>
+        {/* Ticket fixo: números da ordem e um só botão de registo */}
+        <div style={{ position: "sticky", top: 0, background: C.card, border: `1px solid ${canSave ? C.green + "66" : C.border}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {(["LONG", "SHORT"] as const).map((d) => (
               <button
-                onClick={saveTrade}
-                disabled={saving || !canSave}
+                key={d}
+                onClick={() => setDirection(d)}
                 style={{
-                  marginTop: 12,
-                  width: "100%",
-                  background: canSave ? "#14532d" : "#1e293b",
-                  color: canSave ? C.green : C.secondary,
-                  border: `2px solid ${canSave ? C.green : C.border}`,
-                  padding: "14px 16px",
-                  borderRadius: 8,
-                  fontSize: 15,
-                  fontWeight: 800,
-                  cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
+                  flex: 1, padding: "7px 0", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  border: `1px solid ${direction === d ? (d === "LONG" ? C.green : C.red) : C.border}`,
+                  background: direction === d ? (d === "LONG" ? "#14532d" : "#7f1d1d") : C.elevated,
+                  color: direction === d ? (d === "LONG" ? C.green : "#fca5a5") : C.secondary,
                 }}
               >
-                {saving ? "A guardar…" : "Guardar no journal"}
+                {d === "LONG" ? "▲ LONG" : "▼ SHORT"}
               </button>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            <div>
+              <div style={lbl}>ENTRADA</div>
+              <input type="number" step="any" value={entry} onChange={(e) => setEntry(e.target.value)} style={{ width: "100%" }} />
+            </div>
+            <div>
+              <div style={lbl}>STOP LOSS</div>
+              <input type="number" step="any" value={sl} onChange={(e) => setSl(e.target.value)} style={{ width: "100%" }} />
+            </div>
+            <div>
+              <div style={lbl}>TAKE PROFIT</div>
+              <input type="number" step="any" value={tp} onChange={(e) => setTp(e.target.value)} style={{ width: "100%" }} />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: acct?.currency === "EUR" ? "0.7fr 1.3fr 0.8fr" : "0.7fr 1.3fr", gap: 8, marginTop: 8 }}>
+            <div>
+              <div style={lbl}>RISCO %</div>
+              <input type="number" step="0.1" value={riskPct} onChange={(e) => setRiskPct(e.target.value)} style={{ width: "100%" }} />
+            </div>
+            <div>
+              <div style={lbl} title={acct ? `${acct.name} · ${KIND_LABEL[acct.kind]}` : ""}>CAPITAL {acct ? `${acct.name.toUpperCase()} · ${acct.currency}` : "(sem conta)"}</div>
+              <input type="number" step="any" value={equity} placeholder="capital da conta" onChange={(e) => setEquity(e.target.value)} onBlur={(e) => { saveEquity(e.target.value); load(false); }} style={{ width: "100%" }} />
+            </div>
+            {acct?.currency === "EUR" && (
+              <div>
+                <div style={lbl}>USD/EUR{eurusd ? " (BCE)" : ""}</div>
+                <input type="number" step="0.0001" value={usdPerUnit} onChange={(e) => { setUsdPerUnit(e.target.value); writeLocal("tos_usd_per_unit", e.target.value); }} style={{ width: "100%" }} />
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => suggestedTp != null && setTp(suggestedTp.toFixed(dp))}
+            disabled={suggestedTp == null}
+            style={{ marginTop: 8, width: "100%", background: "transparent", color: suggestedTp == null ? C.muted : C.accent, border: `1px dashed ${C.border}`, padding: "5px 8px", borderRadius: 6, fontSize: 11, cursor: suggestedTp == null ? "not-allowed" : "pointer" }}
+          >
+            TP a {Math.max(RISK_RULES.targetRR, pb.minRR)}R{suggestedTp != null ? ` → ${fmtPrice(suggestedTp, asset)}` : ""}
+          </button>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+            <div style={{ background: C.elevated, borderRadius: 6, padding: 8, border: `1px solid ${rrOk ? C.green + "44" : C.border}` }}>
+              <div style={lbl}>R:R</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: rr == null ? C.muted : rrOk ? C.green : C.red }}>{rr == null ? "—" : `1:${rr.toFixed(2)}`}</div>
+              <div style={{ fontSize: 9, color: C.muted }}>mín. {pb.minRR}</div>
+            </div>
+            <div style={{ background: C.elevated, borderRadius: 6, padding: 8, border: `1px solid ${size && !size.ok ? C.red + "66" : C.border}` }}>
+              <div style={lbl}>LOTE ({spec.lotLabel})</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: size == null ? C.muted : size.ok ? "#e2e8f0" : C.red }}>
+                {size == null ? "—" : size.ok ? size.lots.toLocaleString("pt-PT", { maximumFractionDigits: 2 }) : "BLOQ."}
+              </div>
+              <div style={{ fontSize: 9, color: C.muted }}>
+                {size == null ? `${nRisk}% de ${nEquity || 0}` : size.ok ? `arrisca ${size.actualRisk.toFixed(2)}` : `mín. ${size.minLotRiskPct.toFixed(1)}%`}
+              </div>
+            </div>
+            <div style={{ background: C.elevated, borderRadius: 6, padding: 8, border: `1px solid ${propBlock ? C.red + "66" : C.border}` }}>
+              <div style={lbl}>RISCO MÁX.</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: propBlock ? C.red : C.secondary }}>{prop?.maxRiskMoney != null ? prop.maxRiskMoney.toFixed(0) : "—"}</div>
+              <div style={{ fontSize: 9, color: C.muted }}>{prop ? `folga ${prop.account}` : "sem regras"}</div>
             </div>
           </div>
 
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 12 }}>ESTADO PARA OPERAR</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>SONO (h)</div>
-                <input type="number" step="0.5" value={sleepHours} onChange={(e) => setSleepHours(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>STRESS 1–10</div>
-                <input type="number" min="1" max="10" value={stress} onChange={(e) => setStress(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>GRADE</div>
-                <select value={grade} onChange={(e) => setGrade(e.target.value)} style={{ width: "100%" }}>
-                  {["A", "B", "C", "D"].map((g) => <option key={g}>{g}</option>)}
-                </select>
-              </div>
+          <div style={{ display: "grid", gridTemplateColumns: outcome === "RUNNING" ? "1fr" : "1.2fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+            <div>
+              <div style={lbl}>RESULTADO</div>
+              <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} style={{ width: "100%" }}>
+                <option value="RUNNING">Ainda em curso</option>
+                <option value="WIN">Ganho</option>
+                <option value="LOSS">Perda</option>
+                <option value="BE">Break-even</option>
+              </select>
             </div>
-            {mentalClosed && (
-              <div style={{ fontSize: 11, color: C.red, marginTop: 10 }}>Sessão fechada: menos de 6 horas de sono, stress acima de 7, ou nota D.</div>
+            {outcome !== "RUNNING" && (
+              <>
+                <div>
+                  <div style={lbl}>SAÍDA</div>
+                  <input type="number" step="any" value={exitPrice} onChange={(e) => setExitPrice(e.target.value)} style={{ width: "100%" }} />
+                </div>
+                <div>
+                  <div style={lbl}>P&amp;L</div>
+                  <input type="number" step="any" value={pnl} onChange={(e) => setPnl(e.target.value)} style={{ width: "100%" }} />
+                </div>
+              </>
             )}
           </div>
 
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 8 }}>GESTÃO (depois de entrares)</div>
-            {pb.management.map((m) => (
-              <div key={m} style={{ fontSize: 11, color: C.secondary, lineHeight: 1.6 }}>• {m}</div>
-            ))}
-            <div style={{ fontSize: 9, color: C.red, letterSpacing: 1.5, margin: "12px 0 6px" }}>SAI / NÃO ENTRES SE</div>
-            {pb.invalidation.map((m) => (
-              <div key={m} style={{ fontSize: 11, color: "#fca5a5", lineHeight: 1.6 }}>• {m}</div>
-            ))}
+          <div style={{ fontSize: 11.5, color: canSave ? C.green : C.amber, marginTop: 12, lineHeight: 1.45, minHeight: 34 }}>
+            {canSave ? "Tudo verde. Põe a ordem na plataforma e regista." : (whyNot || "Completa os passos e o ticket.")}
           </div>
+          <button
+            onClick={saveTrade}
+            disabled={saving || !canSave}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              background: canSave ? "#14532d" : "#1e293b",
+              color: canSave ? C.green : C.secondary,
+              border: `2px solid ${canSave ? C.green : C.border}`,
+              padding: "12px 16px",
+              borderRadius: 8,
+              fontSize: 15,
+              fontWeight: 800,
+              cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
+            }}
+          >
+            {saving ? "A registar…" : fromSignal?.tradeId ? "Registar (valida o sinal)" : "Registar"}
+          </button>
+          {(saveMsg || savedId) && (
+            <div style={{ marginTop: 8, fontSize: 11.5, color: savedId ? C.green : "#fca5a5", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <span>{saveMsg}{savedId ? ` (#${savedId})` : ""}</span>
+              {savedId && <Link href="/journal" style={{ color: C.accent }}>Abrir no journal →</Link>}
+            </div>
+          )}
+          <AccountsPanel accounts={accounts} asset={asset} onChange={setAccounts} />
         </div>
-      </div>
-
-      <div style={{
-        position: "sticky",
-        bottom: 0,
-        zIndex: 30,
-        margin: "8px -4px -8px",
-        background: "#050810",
-        borderTop: `1px solid ${canSave ? C.green + "66" : C.border}`,
-        padding: "12px 14px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        flexWrap: "wrap",
-      }}>
-        <div style={{ fontSize: 12, color: canSave ? C.green : C.amber, lineHeight: 1.45, flex: 1, minWidth: 200 }}>
-          {canSave ? "Podes gravar. O trade vai para o journal com os dados desta página." : (whyNot || "Completa os passos e a calculadora.")}
-        </div>
-        <button
-          onClick={saveTrade}
-          disabled={saving || !canSave}
-          style={{
-            background: canSave ? "#14532d" : "#1e293b",
-            color: canSave ? C.green : C.secondary,
-            border: `2px solid ${canSave ? C.green : C.border}`,
-            padding: "12px 22px",
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 800,
-            cursor: saving ? "wait" : canSave ? "pointer" : "not-allowed",
-            flexShrink: 0,
-          }}
-        >
-          {saving ? "A guardar…" : "Guardar no journal"}
-        </button>
       </div>
     </div>
   );
