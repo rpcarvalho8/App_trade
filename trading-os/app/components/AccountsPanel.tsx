@@ -36,19 +36,24 @@ export default function AccountsPanel({
   accounts,
   asset,
   onChange,
+  alwaysOpen = false,
 }: {
   accounts: Account[];
-  asset: string;
+  /** Activo da Mesa (mostra o selector da conta). Sem activo: só a lista de contas. */
+  asset?: string;
   onChange: (accounts: Account[]) => void;
+  /** Página Contas: lista sempre aberta, sem o botão de abrir/fechar. */
+  alwaysOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openState, setOpen] = useState(false);
+  const open = alwaysOpen || openState;
   const [err, setErr] = useState("");
   const [draft, setDraft] = useState<{ name: string; kind: AccountKind; currency: AccountCurrency }>({
     name: "",
     kind: "prop",
     currency: "USD",
   });
-  const current = accounts.find((a) => a.symbols.includes(asset)) ?? null;
+  const current = asset ? accounts.find((a) => a.symbols.includes(asset)) ?? null : null;
 
   const run = (method: "PUT" | "DELETE", body: Record<string, unknown>) => {
     setErr("");
@@ -59,7 +64,7 @@ export default function AccountsPanel({
 
   const assign = (name: string) => {
     const target = accounts.find((a) => a.name === name);
-    if (!target) return;
+    if (!target || !asset) return;
     run("PUT", { name, symbols: [...target.symbols, asset] });
   };
 
@@ -67,7 +72,9 @@ export default function AccountsPanel({
 
   return (
     <div style={{ marginTop: 10, background: C.elevated, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
+      {(asset || !alwaysOpen) && (
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {asset && (<>
         <span style={{ fontSize: 9, color: C.muted, letterSpacing: 1 }}>CONTA DO {asset}</span>
         <select value={current?.name ?? ""} onChange={(e) => assign(e.target.value)} style={sel}>
           {!current && <option value="">— sem conta —</option>}
@@ -77,16 +84,20 @@ export default function AccountsPanel({
             </option>
           ))}
         </select>
+        </>)}
+        {!alwaysOpen && (
         <button
           onClick={() => setOpen((o) => !o)}
           style={{ marginLeft: "auto", background: "transparent", color: C.accent, border: "none", cursor: "pointer", fontSize: 11 }}
         >
           {open ? "Fechar contas ▴" : "Gerir contas ▾"}
         </button>
+        )}
       </div>
+      )}
 
       {open && (
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ marginTop: asset || !alwaysOpen ? 10 : 0, display: "flex", flexDirection: "column", gap: 6 }}>
           {accounts.map((a) => (
             <div key={a.name}>
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.7fr 1fr 1.2fr auto", gap: 6, alignItems: "center" }}>
@@ -143,7 +154,7 @@ export default function AccountsPanel({
             </button>
           </div>
           <div style={{ fontSize: 9, color: C.muted }}>
-            Cada activo pertence a uma só conta. Para passar a SOL para uma prop firm, cria a conta e escolhe-a no selector com SOLUSD activo.
+            Cada activo pertence a uma só conta. Para passar a SOL para uma prop firm, cria a conta e escolhe-a na Mesa com SOLUSD activo (selector «Conta do SOLUSD»).
           </div>
         </div>
       )}

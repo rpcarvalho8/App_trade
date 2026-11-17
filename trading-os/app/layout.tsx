@@ -5,31 +5,45 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import AlertToaster from "./components/AlertToaster";
 import DayRiskBar from "./components/DayRiskBar";
+import SidePanel, { type PanelId } from "./components/SidePanel";
 
-/** Navegação pela ordem do dia de trading: preparar e operar, depois rever, e só então consultar. */
+/**
+ * Três zonas: Operar (o que usas com o mercado aberto), Rever (depois da sessão) e Configurar.
+ * Morning Brief e AI Coach abrem como painéis laterais a partir da barra do topo.
+ */
 const navGroups = [
   { title:"OPERAR", items:[
     { href:"/sessao", label:"Mesa de Operação", icon:"▶" },
-    { href:"/morning-brief", label:"Morning Brief", icon:"🌅" },
     { href:"/signals", label:"Sinais", icon:"⚑" },
   ]},
   { title:"REVER", items:[
     { href:"/journal", label:"Journal", icon:"◉" },
     { href:"/performance", label:"Performance", icon:"▲" },
     { href:"/weekly-journal", label:"Journal Semanal", icon:"📅" },
-    { href:"/ai-coach", label:"AI Coach", icon:"⬡" },
     { href:"/", label:"Overview", icon:"◈" },
   ]},
-  { title:"REFERÊNCIA", items:[
+  { title:"CONFIGURAR", items:[
+    { href:"/contas", label:"Contas e regras", icon:"◐" },
     { href:"/setups", label:"Setups", icon:"◆" },
     { href:"/principles", label:"Princípios", icon:"◎" },
     { href:"/exchanges", label:"Exchanges", icon:"⇄" },
   ]},
 ];
 
+const topBtn = (active: boolean): React.CSSProperties => ({
+  background: active ? "#0f4c3a" : "#1e293b",
+  color: active ? "#4af0c4" : "#94a3b8",
+  border: `1px solid ${active ? "#4af0c4" : "#1e2d45"}`,
+  padding: "4px 12px",
+  borderRadius: 4,
+  fontSize: 11,
+  cursor: "pointer",
+});
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const path = usePathname();
+  const [panel, setPanel] = useState<PanelId | null>(null);
 
   return (
     <html lang="pt">
@@ -40,6 +54,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <span style={{ color:"#4af0c4",fontSize:11,fontWeight:600,letterSpacing:1 }}>TRADING OS</span>
           <div style={{ marginLeft:"auto",display:"flex",gap:16,alignItems:"center" }}>
             <DayRiskBar />
+            <button onClick={()=>setPanel(p=>p==="brief"?null:"brief")} style={topBtn(panel==="brief")} title="Morning Brief do dia">🌅 Brief</button>
+            <button onClick={()=>setPanel(p=>p==="coach"?null:"coach")} style={topBtn(panel==="coach")} title="AI Coach semanal">⬡ Coach</button>
             <Link href="/journal" style={{ background:"#1e293b",color:"#94a3b8",border:"1px solid #1e2d45",padding:"4px 12px",borderRadius:4,textDecoration:"none",fontSize:11 }}>+ Trade</Link>
           </div>
         </div>
@@ -74,6 +90,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         {/* Alertas em tempo real (toasts globais via WebSocket) */}
         <AlertToaster />
+        <SidePanel panel={panel} onClose={()=>setPanel(null)} />
       </body>
     </html>
   );
