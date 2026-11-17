@@ -84,8 +84,8 @@ const CANDLE_MS: Record<string, number> = {
 };
 
 const DISCLAIMER =
-  "Preço/OHLC via agregador Twelve Data (XAU/USD), não diretamente da corretora XTB — " +
-  "pode haver divergência de spread/cotação face ao xStation. Entrada continua manual.";
+  "Preço/OHLC via agregador Twelve Data (XAU/USD), não da plataforma da prop firm — " +
+  "pode haver divergência de spread/cotação. Entrada continua manual.";
 
 interface XauState {
   started: boolean;
@@ -208,10 +208,6 @@ function pollPlanSummary(): string {
   );
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
-}
-
 /**
  * Só pede se uma nova vela do TF pode ter aberto/fechado desde o último fetch.
  * Ex.: M5 só quando floor(now, 5m) > lastFetchedBar.
@@ -228,63 +224,89 @@ function shouldFetchForNewCandle(tf: string, now = Date.now()): boolean {
   return true;
 }
 
-async function refreshTf(tf: string, outputsize: number): Promise<boolean> {
-  if (!shouldFetchForNewCandle(tf)) return false;
+/** Tamanho do pedido quando o TF ainda não tem barras suficientes (arranque ou recuperação). */
+const BACKFILL_SIZE: Record<string, number> = { H4: 250, M15: 500, M5: 400 };
+
+/** Ouro fechado: sábado inteiro, sexta depois das 22h UTC e domingo antes das 22h UTC. */
+export function xauMarketClosed(now = Date.now()): boolean {
+  const d = new Date(now);
+  const day = d.getUTCDay();
+  const h = d.getUTCHours();
+  return day === 6 || (day === 5 && h >= 22) || (day === 0 && h < 22);
+}
+
+/**
+ * Actualiza um TF. Se o buffer ainda não tem o mínimo de barras (o backfill falhou ou veio curto),
+ * volta a pedir o histórico completo; senão só pede quando abriu vela nova.
+ */
+async function refreshTf(tf: string): Promise<boolean> {
   const s = state();
-  const candles = await fetchTwelveDataOhlc(tf, outputsize);
-  if (!candles.length) return false;
   const buf = s.buffers.get(tf)!;
+  const needsBackfill = buf.length < MIN_BARS[tf];
+  if (!needsBackfill && !shouldFetchForNewCandle(tf)) return false;
+  const candles = await fetchTwelveDataOhlc(tf, needsBackfill ? BACKFILL_SIZE[tf] : 30);
+  if (!candles.length) return false;
   const merged = new Map<number, Candle>();
   for (const e of buf.candles) merged.set(e.time, e);
   for (const c of candles) merged.set(c.time, c);
   buf.seed([...merged.values()]);
-  await saveCandlesToCache("XAUUSD", tf, candles.slice(-20), "twelvedata");
+  await saveCandlesToCache("XAUUSD", tf, needsBackfill ? candles : candles.slice(-20), "twelvedata");
   const period = CANDLE_MS[tf] || tfToMs(tf);
   s.lastFetchedBar[tf] = floorTime(Date.now(), period);
+  if (needsBackfill) console.log(`[xtb-client] TwelveData backfill ${tf}: ${candles.length} barras`);
   return true;
 }
 
-async function backfillViaTwelveData(): Promise<boolean> {
-  const sizes: Record<string, number> = { H4: 250, M15: 500, M5: 400 };
+/** Estado a partir das barras que existem: fica "ready" assim que todos os TF têm o mínimo. */
+function updateStatus(): void {
   const s = state();
-  for (const tf of XAU_TIMEFRAMES) {
-    const candles = await fetchTwelveDataOhlc(tf, sizes[tf]);
-    seedBuffer(tf, candles);
-    await saveCandlesToCache("XAUUSD", tf, candles, "twelvedata");
-    const period = CANDLE_MS[tf];
-    s.lastFetchedBar[tf] = floorTime(Date.now(), period);
-    console.log(`[xtb-client] TwelveData backfill ${tf}: ${candles.length} barras`);
-    await sleep(8_000); // ≤8/min
+  if (warmUpComplete()) {
+    if (s.status !== "ready") console.log(`[xtb-client] READY via ${s.source}`, barsSnapshot());
+    s.status = "ready";
+  } else {
+    s.status = s.lastError ? "error" : "warming_up";
   }
-  markReady("twelvedata", "fonte primária OHLC (agregador de mercado)");
-  emitFromLast("twelvedata");
+}
 
-  // Tick a cada 60s: cada TF só dispara pedido se a barra mudou (gate acima).
+/**
+ * Um ciclo de polling: cada TF falha sozinho (não mata os outros nem o cliente) e volta a ser
+ * tentado no ciclo seguinte. Antes, um erro no backfill do arranque deixava o XAU parado até reiniciar.
+ */
+export async function pollXauOnce(now = Date.now()): Promise<boolean> {
+  const s = state();
+  if (xauMarketClosed(now) && warmUpComplete()) return false;
+  let any = false;
+  const errors: string[] = [];
+  for (const tf of XAU_TIMEFRAMES) {
+    try {
+      if (await refreshTf(tf)) any = true;
+    } catch (e: any) {
+      errors.push(`${tf}: ${e?.message || e}`);
+    }
+  }
+  if (any) s.source = "twelvedata";
+  if (errors.length) {
+    s.lastError = errors.join(" · ");
+    console.warn("[xtb-client] polling:", s.lastError);
+  } else if (any) {
+    s.lastError = undefined;
+  }
+  updateStatus();
+  if (any) emitFromLast(s.source);
+  return any;
+}
+
+async function startTwelveDataPolling(): Promise<void> {
+  const s = state();
+  await pollXauOnce();
+  // A cada 60 s: cada TF só pede se abriu vela nova (ou se ainda falta histórico).
   const tick = setInterval(() => {
-    (async () => {
-      let any = false;
-      for (const tf of XAU_TIMEFRAMES) {
-        try {
-          if (await refreshTf(tf, 30)) any = true;
-        } catch (e: any) {
-          console.warn(`[xtb-client] refresh ${tf}:`, e?.message || e);
-        }
-      }
-      if (any) emitFromLast("twelvedata");
-    })().catch(() => {});
+    pollXauOnce().catch((e) => console.warn("[xtb-client] poll:", e?.message || e));
   }, 60_000);
   s.timers.push(tick);
-
   const est = estimateDailyCredits();
-  console.log(
-    `[xtb-client] poll plan: ${pollPlanSummary()} | créditos agora:`,
-    getTwelveDataCreditStats()
-  );
-  console.log(
-    `[xtb-client] orçamento: 24h≈${est.continuous24h} · 8h≈${est.session8h} · breakdown24h=`,
-    est.breakdown24h
-  );
-  return warmUpComplete();
+  console.log(`[xtb-client] poll plan: ${pollPlanSummary()} | créditos agora:`, getTwelveDataCreditStats());
+  console.log(`[xtb-client] orçamento: 24h≈${est.continuous24h} · 8h≈${est.session8h} · breakdown24h=`, est.breakdown24h);
 }
 
 async function loadFromCache(): Promise<void> {
@@ -318,7 +340,12 @@ export function startXtbClient(): void {
       await loadFromCache();
 
       if (hasTwelveData()) {
-        await backfillViaTwelveData();
+        if (warmUpComplete()) {
+          // A cache local chega para arrancar já; o polling actualiza a seguir.
+          markReady("cache", "cache local enquanto o Twelve Data actualiza");
+          emitFromLast("cache");
+        }
+        await startTwelveDataPolling();
         return;
       }
 
@@ -367,10 +394,10 @@ export function getXauMarketStatus(): XauMarketStatus {
   const ready = s.status === "ready" && warmUpComplete();
   const beta = true;
   let message = "";
-  if (s.status === "warming_up") message = "A carregar OHLC histórico (backfill Twelve Data)…";
+  if (s.status === "warming_up") message = s.lastError ? `A tentar de novo: ${s.lastError}` : "A carregar OHLC histórico (backfill Twelve Data)…";
   else if (s.status === "error") message = s.lastError || "Erro na fonte de dados XAU";
   else if (s.source === "twelvedata")
-    message = "OHLC via Twelve Data (agregador) — não é o feed XTB/xStation";
+    message = s.lastError ? `OHLC via Twelve Data · último erro: ${s.lastError}` : "OHLC via Twelve Data (agregador) — não é o feed da prop firm";
   else if (s.source === "cache") message = "A usar só cache local — beta";
   else message = "Define TWELVE_DATA_API_KEY em .env.local";
 

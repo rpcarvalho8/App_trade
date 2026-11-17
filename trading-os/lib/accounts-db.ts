@@ -3,7 +3,7 @@
  */
 import { db, getSetting, setSetting } from "@/lib/db";
 import { propDay, rollDayStart, type MaxDdType, type PropRules } from "@/lib/prop-rules";
-import { accountForSymbolIn, isAccountKind, nextPeak, parseSymbols, usdPerAccountUnit, type Account, type AccountCurrency, type AccountKind } from "@/lib/accounts";
+import { accountForSymbolIn, equityDelta, isAccountKind, nextPeak, parseSymbols, usdPerAccountUnit, type Account, type AccountCurrency, type AccountKind } from "@/lib/accounts";
 
 const FX_TTL_MS = 60 * 60_000;
 
@@ -178,4 +178,47 @@ export async function accountForSymbol(symbol: string): Promise<{ equity: number
     usdPerAccountUnit: usdPerAccountUnit(acct?.currency, eurusd),
     account: acct,
   };
+}
+
+/**
+ * Capital automático a partir do journal: quando uma trade fecha (ou é editada), o P&L líquido
+ * entra no capital da conta do activo. Guarda o que já aplicou na própria trade, por isso
+ * editar ou apagar a trade corrige o capital em vez de somar outra vez.
+ * Contas sem capital definido ficam de fora (não há base para somar).
+ */
+export async function syncTradeEquity(tradeId: number): Promise<void> {
+  const r = await db.execute({
+    sql: "SELECT id, pair, outcome, pnl, commission, swap_funding, equity_applied, equity_account FROM trades WHERE id=?",
+    args: [tradeId],
+  });
+  const t = r.rows[0] as unknown as
+    | { pair: string; outcome: string; pnl: number | null; commission: number | null; swap_funding: number | null; equity_applied: number | null; equity_account: string | null }
+    | undefined;
+  if (!t) return;
+  const accounts = await listAccounts();
+  const acct = accountForSymbolIn(accounts, t.pair);
+  // O activo mudou de conta desde a última vez: devolve o que tinha sido aplicado à conta antiga.
+  if (t.equity_account && t.equity_applied && t.equity_account !== acct?.name) {
+    const old = accounts.find((a) => a.name === t.equity_account);
+    if (old) await upsertAccount(old.name, { equity: Math.round((old.equity - Number(t.equity_applied)) * 100) / 100 });
+    await db.execute({ sql: "UPDATE trades SET equity_applied=NULL, equity_account=NULL WHERE id=?", args: [tradeId] });
+    t.equity_applied = null;
+  }
+  if (!acct || !(acct.equity > 0)) return;
+  const { target, delta } = equityDelta(t, t.equity_applied);
+  if (delta === 0) return;
+  await upsertAccount(acct.name, { equity: Math.max(0, Math.round((acct.equity + delta) * 100) / 100) });
+  await db.execute({
+    sql: "UPDATE trades SET equity_applied=?, equity_account=? WHERE id=?",
+    args: [target || null, target ? acct.name : null, tradeId],
+  });
+}
+
+/** Antes de apagar uma trade: tira do capital o P&L que ela tinha somado. */
+export async function revertTradeEquity(tradeId: number): Promise<void> {
+  const r = await db.execute({ sql: "SELECT equity_applied, equity_account FROM trades WHERE id=?", args: [tradeId] });
+  const t = r.rows[0] as unknown as { equity_applied: number | null; equity_account: string | null } | undefined;
+  if (!t?.equity_account || !t.equity_applied) return;
+  const acct = (await listAccounts()).find((a) => a.name === t.equity_account);
+  if (acct) await upsertAccount(acct.name, { equity: Math.max(0, Math.round((acct.equity - Number(t.equity_applied)) * 100) / 100) });
 }

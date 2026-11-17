@@ -241,6 +241,9 @@ async function migrateSignalJournal(): Promise<void> {
     ["swap_funding", "REAL"],
     // Spread na entrada, em unidades de preço.
     ["spread_pts", "REAL"],
+    // P&L líquido já somado ao capital da conta (para não contar duas vezes ao editar a trade).
+    ["equity_applied", "REAL"],
+    ["equity_account", "TEXT"],
   ]);
   await addColumns("signals", [
     ["status", "TEXT DEFAULT 'active'"],

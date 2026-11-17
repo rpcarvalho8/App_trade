@@ -790,7 +790,7 @@ export default function SessaoPage() {
                 </div>
                 {(prop.reason || propBlock) && <div style={{ color: prop.breached || propBlock ? C.red : C.green, marginTop: 6 }}>{propBlock || prop.reason}</div>}
                 <div style={{ color: C.muted, fontSize: 9, marginTop: 6 }}>
-                  Usa o equity actual da conta (campo Capital). Mantém-no igual ao dashboard da prop firm.
+                  O capital actualiza-se sozinho com o P&L líquido das trades que fechas no journal. Se divergir do dashboard, corrige no campo Capital.
                 </div>
               </div>
             )}
