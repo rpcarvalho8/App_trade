@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { initDB } from "@/lib/db";
-import { deleteAccount, getEurUsd, listAccounts, upsertAccount } from "@/lib/accounts-db";
+import { deleteAccount, getEurUsd, listAccounts, upsertAccount, type RulesPatch } from "@/lib/accounts-db";
+import { propStatus } from "@/lib/prop-rules";
 import { isAccountKind, parseSymbols } from "@/lib/accounts";
 
 export const runtime = "nodejs";
@@ -10,7 +11,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   await initDB();
   const [accounts, eurusd] = await Promise.all([listAccounts(), getEurUsd()]);
-  return NextResponse.json({ accounts, eurusd });
+  const now = Date.now();
+  const prop = accounts.map((a) => propStatus(a, now)).filter(Boolean);
+  return NextResponse.json({ accounts, eurusd, prop });
 }
 
 /**
@@ -31,7 +34,23 @@ export async function PUT(req: NextRequest) {
   if (b.currency !== undefined && b.currency !== "EUR" && b.currency !== "USD") {
     return NextResponse.json({ error: "moeda tem de ser EUR ou USD" }, { status: 422 });
   }
+  let rules: RulesPatch | undefined;
+  if (b.rules && typeof b.rules === "object") {
+    const r = b.rules as Record<string, unknown>;
+    const bad = (k: string, min: number, max: number) => {
+      if (!(k in r) || r[k] === null || r[k] === "") return false;
+      const n = Number(r[k]);
+      return !Number.isFinite(n) || n < min || n > max;
+    };
+    if (bad("start_balance", 0, 1e9) || bad("day_start_equity", 0, 1e9)) return NextResponse.json({ error: "valor de capital inválido" }, { status: 422 });
+    if (bad("daily_dd_pct", 0, 100) || bad("max_dd_pct", 0, 100) || bad("profit_target_pct", 0, 1000)) {
+      return NextResponse.json({ error: "percentagem inválida" }, { status: 422 });
+    }
+    if (bad("reset_hour_utc", 0, 23)) return NextResponse.json({ error: "hora de reset entre 0 e 23 (UTC)" }, { status: 422 });
+    rules = r as RulesPatch;
+  }
   const acct = await upsertAccount(name, {
+    rules,
     equity,
     currency: b.currency as "EUR" | "USD" | undefined,
     kind: isAccountKind(b.kind) ? b.kind : undefined,

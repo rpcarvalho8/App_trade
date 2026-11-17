@@ -6,7 +6,8 @@ import { PLAYBOOKS, type SessionAsset } from "@/lib/playbooks";
 import { recentAlerts } from "@/lib/alert-ws";
 import { dailyGuard } from "@/lib/risk";
 import { getEurUsd, listAccounts } from "@/lib/accounts-db";
-import { toEur } from "@/lib/accounts";
+import { toEur, type Account } from "@/lib/accounts";
+import { propStatus } from "@/lib/prop-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,11 +56,15 @@ export async function GET(req: Request) {
   const date = todayISO();
   const params = new URL(req.url).searchParams;
   let equity = Number(params.get("equity"));
+  const accts: Account[] = await listAccounts().catch(() => []);
   // Sem capital no pedido: capital total das contas no servidor (prop firms + corretoras), em EUR.
   if (!(Number.isFinite(equity) && equity > 0)) {
-    const [accts, eurusd] = await Promise.all([listAccounts().catch(() => []), getEurUsd().catch(() => null)]);
+    const eurusd = await getEurUsd().catch(() => null);
     equity = accts.reduce((sum, a) => sum + toEur(a.equity, a.currency, eurusd), 0);
   }
+  // Regras de cada prop firm (perda diária, perda total, profit target).
+  const now = Date.now();
+  const prop = accts.map((a) => propStatus(a, now)).filter((s) => s != null);
   // O motor de sinais lê daqui o capital para sugerir o lote e o stop máximo.
   if (Number.isFinite(equity) && equity > 0) await setSetting("equity", String(equity)).catch(() => {});
   const fx = Number(params.get("usd_per_unit"));
@@ -153,6 +158,7 @@ export async function GET(req: Request) {
     },
     alerts: recentAlerts().slice(0, 8),
     account,
+    prop,
     byAsset: {
       XAUUSD: pairState("XAUUSD"),
       SOLUSD: pairState("SOLUSD"),
