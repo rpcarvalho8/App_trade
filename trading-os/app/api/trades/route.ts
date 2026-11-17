@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revertTradeEquity, syncTradeEquity } from "@/lib/accounts-db";
 import { initDB, db } from "@/lib/db";
 import { canonicalizePair } from "@/lib/pairs";
 import { deriveOutcome, realizedR, validateTrade, type Side } from "@/lib/risk";
@@ -72,7 +73,10 @@ export async function POST(req: NextRequest) {
       sql: `INSERT INTO trades (${TRADE_FIELDS.join(",")}) VALUES (${TRADE_FIELDS.map(()=>"?").join(",")})`,
       args: vals,
     });
-    return NextResponse.json({ id: Number(result.lastInsertRowid) });
+    const id = Number(result.lastInsertRowid);
+    // Trade já fechada: o P&L líquido entra no capital da conta.
+    await syncTradeEquity(id).catch((e) => console.warn("[trades] capital:", e instanceof Error ? e.message : e));
+    return NextResponse.json({ id });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Erro ao guardar trade" }, { status: 500 });
   }
@@ -108,6 +112,7 @@ export async function PUT(req: NextRequest) {
     return v ?? "";
   });
   await db.execute({ sql:`UPDATE trades SET ${sets} WHERE id=?`, args:[...vals, id] });
+  await syncTradeEquity(Number(id)).catch((e) => console.warn("[trades] capital:", e instanceof Error ? e.message : e));
   return NextResponse.json({ ok: true });
 }
 
@@ -116,6 +121,7 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error:"Missing id" }, { status:400 });
+  await revertTradeEquity(Number(id)).catch((e) => console.warn("[trades] capital:", e instanceof Error ? e.message : e));
   await db.execute({ sql:"DELETE FROM trades WHERE id=?", args:[id] });
   return NextResponse.json({ ok: true });
 }

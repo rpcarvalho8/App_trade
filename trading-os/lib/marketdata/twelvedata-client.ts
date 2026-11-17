@@ -39,7 +39,7 @@ export async function fetchTwelveDataOhlc(
 
   const url =
     `${BASE}/time_series?symbol=${encodeURIComponent("XAU/USD")}` +
-    `&interval=${interval}&outputsize=${outputsize}&order=ASC&apikey=${encodeURIComponent(apiKey)}`;
+    `&interval=${interval}&outputsize=${outputsize}&order=ASC&timezone=UTC&apikey=${encodeURIComponent(apiKey)}`;
 
   const res = await fetch(url, {
     headers: { Accept: "application/json" },

@@ -155,3 +155,17 @@ export function costsByAccount(
     grossPnl: v.gross,
   }));
 }
+
+/**
+ * Quanto a trade deve mexer no capital da conta: o P&L líquido se estiver fechada (WIN/LOSS/BE),
+ * zero se não estiver; menos o que já foi aplicado antes (edições não contam duas vezes).
+ */
+export function equityDelta(
+  t: CostFields & { outcome?: unknown },
+  applied: unknown
+): { target: number; delta: number } {
+  const closed = t.outcome === "WIN" || t.outcome === "LOSS" || t.outcome === "BE";
+  const target = closed && t.pnl != null && t.pnl !== "" ? Math.round(netPnl(t) * 100) / 100 : 0;
+  const prev = Number(applied) || 0;
+  return { target, delta: Math.round((target - prev) * 100) / 100 };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountForSymbolIn, costInR, costsByAccount, DEFAULT_ACCOUNTS, netPnl, nextPeak, parseSymbols, toEur, tradeFees, usdPerAccountUnit } from "@/lib/accounts";
+import { accountForSymbolIn, costInR, equityDelta, costsByAccount, DEFAULT_ACCOUNTS, netPnl, nextPeak, parseSymbols, toEur, tradeFees, usdPerAccountUnit } from "@/lib/accounts";
 
 describe("contas", () => {
   it("conta por activo: ouro na prop firm, SOL na Kraken", () => {
@@ -61,5 +61,15 @@ describe("custos", () => {
     expect(fp.grossPnl).toBe(5);
     expect(out.find((b) => b.account === "Kraken")!.netPnl).toBe(3.5);
     expect(out.find((b) => b.account === "Outra")!.trades).toBe(1);
+  });
+
+  it("capital a partir do journal: só trades fechadas, sem contar duas vezes", () => {
+    expect(equityDelta({ outcome: "WIN", pnl: 50, commission: 2 }, null)).toEqual({ target: 48, delta: 48 });
+    // Editada de 50 para 40: só a diferença.
+    expect(equityDelta({ outcome: "WIN", pnl: 40, commission: 2 }, 48)).toEqual({ target: 38, delta: -10 });
+    // Voltou a "em curso": devolve o que tinha somado.
+    expect(equityDelta({ outcome: "RUNNING", pnl: 40 }, 38)).toEqual({ target: 0, delta: -38 });
+    expect(equityDelta({ outcome: "PENDING", pnl: null }, null)).toEqual({ target: 0, delta: 0 });
+    expect(equityDelta({ outcome: "LOSS", pnl: -25, swap_funding: 0.5 }, null).delta).toBe(-25.5);
   });
 });
