@@ -209,6 +209,9 @@ function SignalRow({ sig }: { sig: Record<string, any> }) {
     entry: String(sig.entry ?? ""),
     sl: String(sig.stop_loss ?? ""),
     tp: String(sig.take_profit ?? ""),
+    strategy: String(sig.strategy_id ?? ""),
+    signal: String(sig.id),
+    ...(sig.trade_id && sig.trade_outcome === "PENDING" ? { trade: String(sig.trade_id) } : {}),
   }).toString()}`;
   const cell = (label: string, value: string, cls = "text-slate-100") => (
     <span className="whitespace-nowrap">
