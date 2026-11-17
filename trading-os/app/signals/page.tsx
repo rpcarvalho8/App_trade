@@ -281,7 +281,7 @@ function StrategyCard({ st, asset, diag, now }: { st: StrategyInfo; asset: Asset
   const sourceNote =
     asset.disclaimer ||
     (beta
-      ? "Cotação do agregador Twelve Data (XAU/USD), não da XTB. Pode divergir do xStation no spread; a entrada é sempre manual."
+      ? "Cotação do agregador Twelve Data (XAU/USD), não da tua prop firm. Pode divergir da plataforma no spread; a entrada é sempre manual."
       : "Velas e spread em tempo real da Kraken.");
   return (
     <div id={st.id} className="flex scroll-mt-4 flex-col rounded-lg border border-[#1e2d45] bg-[#0d1929] p-4 target:border-[#4af0c4]">

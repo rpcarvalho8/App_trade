@@ -3,9 +3,9 @@ import { initDB, db } from "@/lib/db";
 import { canonicalizePair } from "@/lib/pairs";
 import { deriveOutcome, realizedR, validateTrade, type Side } from "@/lib/risk";
 
-const TRADE_FIELDS = ["date","pair","direction","setup","session","entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","outcome","elliott_wave","wyckoff_phase","wyckoff_event","imbalance_zone","htf_bias","confluences","entry_reason","shock_type","shock_timeframe","management","lesson","notes","screenshot_before","screenshot_after","screenshot_entry","tags","mental_state","followed_plan","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level","emotional_state","pre_session_notes","post_trade_emotion"] as const;
+const TRADE_FIELDS = ["date","pair","direction","setup","session","entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","outcome","elliott_wave","wyckoff_phase","wyckoff_event","imbalance_zone","htf_bias","confluences","entry_reason","shock_type","shock_timeframe","management","lesson","notes","screenshot_before","screenshot_after","screenshot_entry","tags","mental_state","followed_plan","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level","emotional_state","pre_session_notes","post_trade_emotion","commission","swap_funding","spread_pts"] as const;
 const TRADE_FIELD_SET = new Set<string>([...TRADE_FIELDS, "signal_status"]);
-const NUM_FIELDS = new Set(["entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level"]);
+const NUM_FIELDS = new Set(["entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level","commission","swap_funding","spread_pts"]);
 /** Campos que, se mudarem, obrigam a validar de novo a trade inteira. */
 const LEVEL_FIELDS = ["pair","direction","entry","stop_loss","take_profit","exit_price","pnl","outcome"];
 

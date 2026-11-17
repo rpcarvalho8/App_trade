@@ -246,15 +246,15 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
 
 /**
  * Passo extra quando a Mesa abre a partir de um sinal: o motor viu o gráfico do agregador
- * (Twelve Data / Kraken); tu confirmas na corretora antes de pôr a ordem.
+ * (Twelve Data / Kraken); tu confirmas na plataforma da conta antes de pôr a ordem.
  */
 export const BROKER_CHECK_STEP: PlaybookStep = {
   id: "broker_check",
-  label: "Confirmar o sinal no gráfico da corretora",
-  chart: "xStation (XTB) ou Kraken, mesmo timeframe de entrada",
-  do: "Abre o gráfico na corretora e confirma que o setup do sinal é visível ali e que o preço ainda está perto do PE (o sinal vale 3 velas do timeframe de entrada). Ajusta PE/SL ao spread real se for preciso.",
+  label: "Confirmar o sinal no gráfico da tua conta",
+  chart: "Plataforma da prop firm (ouro) ou Kraken (SOL), mesmo timeframe de entrada",
+  do: "Abre o gráfico na plataforma da conta e confirma que o setup do sinal é visível ali e que o preço ainda está perto do PE (o sinal vale 3 velas do timeframe de entrada). Ajusta PE/SL ao spread real se for preciso.",
   yesIf: "Vês o mesmo setup e o preço ainda está perto da entrada.",
-  noIf: "O preço já fugiu da entrada, o sinal expirou, ou o gráfico da corretora não mostra o mesmo.",
+  noIf: "O preço já fugiu da entrada, o sinal expirou, ou o gráfico da plataforma não mostra o mesmo.",
   kind: "manual",
   signalOnly: true,
 };

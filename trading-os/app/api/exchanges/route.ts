@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { initDB, db } from "@/lib/db";
 
 // Exchange API integrations — read-only (positions, closed trades)
-// Supports: Bybit, Binance, Kraken (XTB has no public API for retail)
+// Supports: Bybit, Binance, Kraken (prop firms have no public trades API)
 
 async function fetchBybit(apiKey: string, apiSecret: string) {
   const crypto = await import("crypto");
@@ -139,7 +139,7 @@ export async function GET() {
       { id: "bybit", name: "Bybit", docs: "https://www.bybit.com/app/user/api-management", features: ["futures","spot","P&L","fees"] },
       { id: "binance", name: "Binance", docs: "https://www.binance.com/en/my/settings/api-management", features: ["futures","spot","P&L","fees"] },
       { id: "kraken", name: "Kraken", docs: "https://www.kraken.com/u/security/api", features: ["spot","P&L","fees"] },
-      { id: "xtb", name: "XTB", docs: "https://www.xtb.com", features: [], note: "XTB não disponibiliza API pública para retail. Importação manual por CSV." },
+      { id: "fundingpips", name: "FundingPips (prop firm)", docs: "https://fundingpips.com", features: [], note: "Prop firms não dão API de trades. Importação manual a partir do histórico da plataforma." },
     ]
   });
 }

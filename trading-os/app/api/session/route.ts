@@ -5,6 +5,8 @@ import { canonicalizePair } from "@/lib/pairs";
 import { PLAYBOOKS, type SessionAsset } from "@/lib/playbooks";
 import { recentAlerts } from "@/lib/alert-ws";
 import { dailyGuard } from "@/lib/risk";
+import { getEurUsd, listAccounts } from "@/lib/accounts-db";
+import { toEur } from "@/lib/accounts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,7 +54,12 @@ export async function GET(req: Request) {
   await initDB();
   const date = todayISO();
   const params = new URL(req.url).searchParams;
-  const equity = Number(params.get("equity"));
+  let equity = Number(params.get("equity"));
+  // Sem capital no pedido: capital total das contas no servidor (prop firms + corretoras), em EUR.
+  if (!(Number.isFinite(equity) && equity > 0)) {
+    const [accts, eurusd] = await Promise.all([listAccounts().catch(() => []), getEurUsd().catch(() => null)]);
+    equity = accts.reduce((sum, a) => sum + toEur(a.equity, a.currency, eurusd), 0);
+  }
   // O motor de sinais lê daqui o capital para sugerir o lote e o stop máximo.
   if (Number.isFinite(equity) && equity > 0) await setSetting("equity", String(equity)).catch(() => {});
   const fx = Number(params.get("usd_per_unit"));

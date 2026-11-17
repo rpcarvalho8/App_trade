@@ -4,6 +4,7 @@
  */
 import { db, initDB, getSetting } from "@/lib/db";
 import { STRATEGIES } from "@/lib/strategies";
+import { accountForSymbol } from "@/lib/accounts-db";
 import {
   buildPendingTrade,
   checkContraTrigger,
@@ -97,8 +98,13 @@ function mkAlert(signal: EngineSignal, signalId: number, tradeId: number | null,
   };
 }
 
-/** Capital guardado pela Mesa (/api/session) para o motor calcular o lote. */
-async function accountForSizing() {
+/**
+ * Capital da conta a que o activo está atribuído (prop firm ou corretora), com câmbio automático.
+ * Recurso: o valor antigo guardado pela Mesa em settings.
+ */
+async function accountForSizing(symbol: string) {
+  const acct = await accountForSymbol(symbol).catch(() => null);
+  if (acct?.equity) return { equity: acct.equity, usdPerAccountUnit: acct.usdPerAccountUnit };
   const equity = Number(await getSetting("equity").catch(() => null)) || null;
   const fx = Number(await getSetting("usd_per_account_unit").catch(() => null)) || 1;
   return { equity, usdPerAccountUnit: fx };
@@ -185,7 +191,7 @@ export async function emitSignalAlert(signal: EngineSignal): Promise<{ id: numbe
   let executable: number | null = null;
   const strategy = STRATEGIES[signal.strategyId];
   try {
-    const pending = strategy ? buildPendingTrade(signal, strategy, id, await accountForSizing()) : null;
+    const pending = strategy ? buildPendingTrade(signal, strategy, id, await accountForSizing(signal.symbol)) : null;
     if (pending) {
       const cols = Object.keys(pending);
       const res = await db.execute({

@@ -7,7 +7,7 @@ const EXCHANGES = [
   { id:"bybit",name:"Bybit",logo:"🔶",color:"#f7931a",status:"supported",docs:"https://www.bybit.com/app/user/api-management",note:"Futures & Spot. Criar API key com permissão Read Only." },
   { id:"binance",name:"Binance",logo:"🟡",color:"#f3ba2f",status:"supported",docs:"https://www.binance.com/en/my/settings/api-management",note:"Futures (FAPI) & Spot. API key com Read Only." },
   { id:"kraken",name:"Kraken",logo:"🐙",color:"#5741d9",status:"supported",docs:"https://www.kraken.com/u/security/api",note:"Spot & Futuros. API key com permissão Query Funds & Orders." },
-  { id:"xtb",name:"XTB",logo:"📊",color:"#e63946",status:"manual",docs:"https://www.xtb.com",note:"XTB não disponibiliza API pública REST para clientes retail. Importa trades manualmente via CSV (Export do xStation)." },
+  { id:"fundingpips",name:"FundingPips (prop firm)",logo:"🏆",color:"#e63946",status:"manual",docs:"https://fundingpips.com",note:"As prop firms não dão API de trades. Exporta o histórico da plataforma (MT5, cTrader ou Match-Trader) e regista no Journal." },
 ];
 
 interface ExchangeConfig { exchange: string; apiKey: string; apiSecret: string; }
@@ -157,10 +157,10 @@ export default function ExchangesPage() {
                   <div style={{ background:C.elevated,borderRadius:6,padding:12 }}>
                     <div style={{ fontSize:9,color:C.amber,letterSpacing:1.5,marginBottom:8 }}>COMO IMPORTAR MANUALMENTE</div>
                     <div style={{ fontSize:11,color:C.secondary,lineHeight:1.7 }}>
-                      1. No xStation 5: Menu → Histórico → Exportar CSV<br/>
+                      1. Na plataforma da prop firm: Histórico → Exportar (CSV ou relatório)<br/>
                       2. Seleciona o período pretendido<br/>
                       3. Exporta e regista manualmente cada trade no Journal<br/>
-                      <span style={{ color:C.muted }}>Nota: A XTB não permite acesso via API para contas retail.</span>
+                      <span style={{ color:C.muted }}>Nota: as prop firms não permitem acesso aos trades por API.</span>
                     </div>
                   </div>
                 )}

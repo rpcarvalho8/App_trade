@@ -14,18 +14,12 @@ export default function DayRiskBar() {
   const [hasEquity, setHasEquity] = useState(true);
 
   useEffect(() => {
-    let eq = "";
-    try {
-      eq = window.localStorage.getItem("tos_equity") || "";
-    } catch {
-      /* armazenamento indisponível */
-    }
-    const withEquity = Number(eq) > 0;
+    // O capital vem das contas guardadas no servidor (prop firms e corretoras), não do browser.
     const load = () => {
-      fetch(withEquity ? `/api/session?equity=${encodeURIComponent(eq)}` : "/api/session")
+      fetch("/api/session")
         .then((r) => (r.ok ? r.json() : null))
         .then((d: { account?: Account } | null) => {
-          setHasEquity(withEquity);
+          setHasEquity(!!d?.account && d.account.equity > 0);
           setAccount(d?.account ?? null);
         })
         .catch(() => {});
