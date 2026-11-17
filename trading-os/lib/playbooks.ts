@@ -13,10 +13,19 @@ export interface PlaybookStep {
   /** Condição para clicar NÃO. */
   noIf: string;
   kind: StepKind;
+  /**
+   * Passo do motor de sinais (lib/strategies/*.json) que confirma este passo. Quando a Mesa abre a
+   * partir de um sinal, estes passos já vêm a SIM; os restantes continuam manuais.
+   */
+  engineStep?: string;
+  /** Só aparece quando a Mesa abre a partir de um sinal do motor. */
+  signalOnly?: boolean;
 }
 
 export interface AssetPlaybook {
   asset: SessionAsset;
+  /** Id da estratégia do motor (lib/strategies/*.json). */
+  strategyId: string;
   setupName: string;
   title: string;
   tagline: string;
@@ -42,6 +51,7 @@ export interface AssetPlaybook {
 export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
   XAUUSD: {
     asset: "XAUUSD",
+    strategyId: "xauusd-london-structure",
     setupName: "XAUUSD — London Structure",
     title: "London Structure",
     tagline: "Primeiro defines a direcção no H4. Depois esperas uma falsa quebra no M15. Só então entras no M5.",
@@ -65,6 +75,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "Não há nenhum desses eventos nos próximos 30 minutos.",
         noIf: "Há uma notícia forte a sair em breve. A app bloqueia este passo sozinha.",
         kind: "news",
+        engineStep: "calendar_clean",
       },
       {
         id: "bias",
@@ -74,6 +85,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "A tendência de 4 horas está óbvia, num só sentido.",
         noIf: "O preço está de lado, a ir e a voltar, sem direcção. Não operas.",
         kind: "manual",
+        engineStep: "bias_h4",
       },
       {
         id: "sweep",
@@ -83,6 +95,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "Furou o nível e fechou de volta para dentro (falsa quebra).",
         noIf: "Quebrou e ficou fechado do outro lado, ou ainda não furou nada.",
         kind: "manual",
+        engineStep: "liquidity_sweep",
       },
       {
         id: "mss",
@@ -92,6 +105,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "O M15 já virou e aponta para o mesmo lado do H4.",
         noIf: "O preço continua na direcção da quebra, sem virar. Não há entrada.",
         kind: "manual",
+        engineStep: "mss_cisd",
       },
       {
         id: "zone",
@@ -101,6 +115,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "Consegues apontar com o rato o sítio exacto da entrada e do stop.",
         noIf: "Não vês uma zona nítida. Esperas; não improvisas.",
         kind: "manual",
+        engineStep: "ob_or_fvg",
       },
       {
         id: "rr",
@@ -141,6 +156,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
   },
   SOLUSD: {
     asset: "SOLUSD",
+    strategyId: "solusd-smc-3step",
     setupName: "SMC 3-Step Scalping",
     title: "SMC 3-Step",
     tagline: "Três passos obrigatórios, por esta ordem: falsa quebra no 15m, viragem no 1m com volume, e ordem no gap do 1m.",
@@ -165,6 +181,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "Vês a falsa quebra (furou e fechou dentro) e o desvio é pequeno (≤ 0,2%).",
         noIf: "Não furou, ou furou e ficou fechado do outro lado, ou o pavio foi demasiado longo. Sem este passo, não há setup.",
         kind: "manual",
+        engineStep: "liquidity_sweep",
       },
       {
         id: "choch",
@@ -174,6 +191,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "A estrutura de 1m virou e a vela da viragem veio com volume alto.",
         noIf: "Virou sem volume, ou já passaram 20 velas de 1m sem viragem. O setup morreu.",
         kind: "manual",
+        engineStep: "choch_volume",
       },
       {
         id: "fvg",
@@ -183,6 +201,7 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
         yesIf: "Existe um gap nítido, grande o suficiente, dentro da zona 61,8–78,6.",
         noIf: "O gap está fora dessa zona, é demasiado pequeno, ou não existe. Não entras.",
         kind: "manual",
+        engineStep: "fvg_golden_ratio",
       },
       {
         id: "rr",
@@ -224,6 +243,128 @@ export const PLAYBOOKS: Record<SessionAsset, AssetPlaybook> = {
     ],
   },
 };
+
+/**
+ * Passo extra quando a Mesa abre a partir de um sinal: o motor viu o gráfico do agregador
+ * (Twelve Data / Kraken); tu confirmas na corretora antes de pôr a ordem.
+ */
+export const BROKER_CHECK_STEP: PlaybookStep = {
+  id: "broker_check",
+  label: "Confirmar o sinal no gráfico da corretora",
+  chart: "xStation (XTB) ou Kraken, mesmo timeframe de entrada",
+  do: "Abre o gráfico na corretora e confirma que o setup do sinal é visível ali e que o preço ainda está perto do PE (o sinal vale 3 velas do timeframe de entrada). Ajusta PE/SL ao spread real se for preciso.",
+  yesIf: "Vês o mesmo setup e o preço ainda está perto da entrada.",
+  noIf: "O preço já fugiu da entrada, o sinal expirou, ou o gráfico da corretora não mostra o mesmo.",
+  kind: "manual",
+  signalOnly: true,
+};
+
+function rotationPlaybook(asset: SessionAsset): AssetPlaybook {
+  const base = PLAYBOOKS[asset];
+  return {
+    ...base,
+    strategyId: asset === "XAUUSD" ? "xauusd-htf-rotation" : "solusd-htf-rotation",
+    setupName: "HTF Imbalance Rotation",
+    title: "HTF Imbalance Rotation",
+    tagline: "O preço volta a uma zona fresca de H4/H1 a favor da tendência de 4 horas. Entras quando o M5 vira dentro da zona.",
+    timeframes: "H4 = direcção · H4/H1 = zona (FVG ou bloco de ordens) · M5 = viragem e entrada",
+    minRR: 2,
+    maxTrades: Math.min(base.maxTrades, 2),
+    pauseMinutes: 60,
+    steps: [
+      {
+        id: "news",
+        label: "Confirmar que não há notícia forte a 30 minutos",
+        chart: "Painel Contexto (calendário)",
+        do: "Procura NFP, CPI, FOMC ou discurso da Fed nos próximos 30 minutos.",
+        yesIf: "Nenhum evento forte nos próximos 30 minutos.",
+        noIf: "Há notícia forte em breve. A app bloqueia este passo sozinha.",
+        kind: "news",
+        engineStep: "calendar_clean",
+      },
+      {
+        id: "zone",
+        label: "Preço a tocar uma zona fresca de H4/H1 a favor do H4",
+        chart: "Gráficos H4 e H1",
+        do: "No H4 confirma a direcção (último BOS). Procura a primeira FVG ou bloco de ordens ainda não tocado, em H4 ou H1, que saiu de um impulso forte a favor dessa direcção. O preço tem de estar a tocá-la agora.",
+        yesIf: "O preço está dentro de uma zona fresca H4/H1, alinhada com o H4 (o motor avisa com ARMADO).",
+        noIf: "A zona já foi usada, é contra o H4, ou o preço ainda não chegou lá.",
+        kind: "manual",
+        engineStep: "htf_zone_tap",
+      },
+      {
+        id: "mss",
+        label: "Viragem de estrutura no M5 dentro da zona",
+        chart: "Gráfico M5",
+        do: "Dentro da zona, espera que o M5 quebre a estrutura a favor do H4 (fecho acima do último máximo menor para comprar, abaixo do último mínimo maior para vender). Tens até 24 velas de M5 depois do toque.",
+        yesIf: "O M5 virou dentro da zona, a favor do H4.",
+        noIf: "Uma vela de M15 fechou para lá da zona, ou passaram 24 velas sem viragem.",
+        kind: "manual",
+        engineStep: "ltf_mss",
+      },
+      {
+        id: "rr",
+        label: "Verificar se o lucro vale pelo menos o dobro do risco",
+        chart: "Calculadora desta página",
+        do: "SL para lá do extremo do toque na zona. TP na zona oposta de H4/H1 ou no swing H4, até 4R. A calculadora tem de dar 1:2 ou mais.",
+        yesIf: "A calculadora mostra 1:2 ou superior.",
+        noIf: "Dá menos de 1:2. Rejeitas o trade.",
+        kind: "rr",
+      },
+      {
+        id: "risk",
+        label: "Fixar o risco e o estado para operar",
+        chart: "Calculadora + Estado para operar",
+        do: "Risco 0,5% (0,25% se estiveres cansado). Preenche sono, stress e nota mental.",
+        yesIf: "Risco definido e estado para operar ok.",
+        noIf: "Sono, stress ou nota mental fora das regras.",
+        kind: "filters",
+      },
+    ],
+    management: [
+      "SL para lá do extremo do toque na zona (+0,1 ATR M15).",
+      "A 1R fechas 50% e pões o stop no preço de entrada.",
+      "O resto corre até à zona oposta H4/H1 ou ao swing H4 (máximo 4R).",
+    ],
+    invalidation: [
+      "Uma vela de M15 fecha para lá da zona — setup morto.",
+      "O H4 muda de direcção a meio do setup.",
+      "Notícia forte a sair.",
+      "R:R abaixo de 1:2.",
+    ],
+  };
+}
+
+/** Uma Mesa por estratégia do motor: os passos são os da estratégia, não os do activo. */
+export const STRATEGY_PLAYBOOKS: Record<string, AssetPlaybook> = {
+  "xauusd-london-structure": PLAYBOOKS.XAUUSD,
+  "xauusd-htf-rotation": rotationPlaybook("XAUUSD"),
+  "solusd-smc-3step": PLAYBOOKS.SOLUSD,
+  "solusd-htf-rotation": rotationPlaybook("SOLUSD"),
+};
+
+export function playbooksForAsset(asset: SessionAsset): AssetPlaybook[] {
+  return Object.values(STRATEGY_PLAYBOOKS).filter((p) => p.asset === asset);
+}
+
+/**
+ * Estado inicial dos passos. Vindo de um sinal do motor, a sequência inteira já confirmou:
+ * os passos com engineStep entram a SIM e só ficam por marcar os manuais.
+ */
+export function initialChecks(pb: AssetPlaybook, fromSignal: boolean): Record<string, "pending" | "yes" | "no"> {
+  const out: Record<string, "pending" | "yes" | "no"> = {};
+  for (const st of stepsFor(pb, fromSignal)) out[st.id] = fromSignal && st.engineStep ? "yes" : "pending";
+  return out;
+}
+
+/** Passos visíveis: os da estratégia, mais a confirmação na corretora quando vem de um sinal. */
+export function stepsFor(pb: AssetPlaybook, fromSignal: boolean): PlaybookStep[] {
+  if (!fromSignal) return pb.steps.filter((s) => !s.signalOnly);
+  const idx = pb.steps.findIndex((s) => s.kind === "rr");
+  const steps = [...pb.steps];
+  steps.splice(idx >= 0 ? idx : steps.length, 0, BROKER_CHECK_STEP);
+  return steps;
+}
 
 export function getPlaybook(asset: string): AssetPlaybook | null {
   if (asset === "XAUUSD" || asset === "SOLUSD") return PLAYBOOKS[asset];

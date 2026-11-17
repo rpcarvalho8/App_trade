@@ -3,7 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   PLAYBOOKS,
+  STRATEGY_PLAYBOOKS,
   calcRR,
+  initialChecks,
+  playbooksForAsset,
+  stepsFor,
   type SessionAsset,
   type AssetPlaybook,
 } from "@/lib/playbooks";
@@ -42,7 +46,7 @@ function fmtPrice(v: number | null | undefined, asset: SessionAsset) {
 }
 
 function emptyChecks(pb: AssetPlaybook): Record<string, Check> {
-  return Object.fromEntries(pb.steps.map((s) => [s.id, "pending"])) as Record<string, Check>;
+  return initialChecks(pb, false);
 }
 
 type SessionCtx = {
@@ -83,7 +87,12 @@ const writeLocal = (key: string, value: string) => {
 
 export default function SessaoPage() {
   const [asset, setAsset] = useState<SessionAsset>("XAUUSD");
-  const pb = PLAYBOOKS[asset];
+  /** Estratégia do motor cuja lista de passos a Mesa mostra. */
+  const [strategyId, setStrategyId] = useState(PLAYBOOKS.XAUUSD.strategyId);
+  /** Sinal do motor que abriu a Mesa ("Carregar na Mesa"): { sinal, linha pendente no journal }. */
+  const [fromSignal, setFromSignal] = useState<{ id: number; tradeId: number | null } | null>(null);
+  const pb = STRATEGY_PLAYBOOKS[strategyId] || PLAYBOOKS[asset];
+  const steps = stepsFor(pb, !!fromSignal);
   const [checks, setChecks] = useState<Record<string, Check>>(() => emptyChecks(PLAYBOOKS.XAUUSD));
   const [direction, setDirection] = useState<"LONG" | "SHORT">("LONG");
   const [entry, setEntry] = useState("");
@@ -141,7 +150,11 @@ export default function SessaoPage() {
     const qp = new URLSearchParams(window.location.search);
     const qAsset = qp.get("asset");
     if (qAsset === "XAUUSD" || qAsset === "SOLUSD") {
-      switchAsset(qAsset);
+      const qSignal = Number(qp.get("signal")) || null;
+      const qTrade = Number(qp.get("trade")) || null;
+      const qStrategy = qp.get("strategy") || "";
+      const sid = STRATEGY_PLAYBOOKS[qStrategy]?.asset === qAsset ? qStrategy : PLAYBOOKS[qAsset].strategyId;
+      switchStrategy(sid, qSignal ? { id: qSignal, tradeId: qTrade } : null);
       const qDir = (qp.get("dir") || "").toUpperCase();
       if (qDir === "LONG" || qDir === "SHORT") setDirection(qDir);
       if (qp.get("entry")) setEntry(String(qp.get("entry")));
@@ -168,10 +181,15 @@ export default function SessaoPage() {
       });
   }, []);
 
-  const switchAsset = (a: SessionAsset) => {
-    const next = PLAYBOOKS[a];
-    setAsset(a);
-    setChecks(emptyChecks(next));
+  const switchAsset = (a: SessionAsset) => switchStrategy(playbooksForAsset(a)[0].strategyId, null);
+
+  const switchStrategy = (sid: string, signal: { id: number; tradeId: number | null } | null) => {
+    const next = STRATEGY_PLAYBOOKS[sid];
+    if (!next) return;
+    setAsset(next.asset);
+    setStrategyId(sid);
+    setFromSignal(signal);
+    setChecks(initialChecks(next, !!signal));
     setRiskPct(String(next.defaultRiskPct));
     setEntry("");
     setSl("");
@@ -203,7 +221,7 @@ export default function SessaoPage() {
 
   const autoChecks = useMemo(() => {
     const next = { ...checks };
-    for (const step of pb.steps) {
+    for (const step of steps) {
       if (step.kind === "news") {
         if (blackout) next[step.id] = "no";
       }
@@ -215,24 +233,24 @@ export default function SessaoPage() {
     return next;
   }, [checks, pb, blackout, rr, rrOk]);
 
-  const firstBlockedIdx = pb.steps.findIndex((_, i) => {
+  const firstBlockedIdx = steps.findIndex((_, i) => {
     if (i === 0) return false;
-    return autoChecks[pb.steps[i - 1].id] !== "yes";
+    return autoChecks[steps[i - 1].id] !== "yes";
   });
 
-  const anyNo = pb.steps.some((s, i) => {
+  const anyNo = steps.some((s, i) => {
     if (firstBlockedIdx >= 0 && i > firstBlockedIdx) return false;
     return autoChecks[s.id] === "no";
   });
-  const allYes = pb.steps.every((s) => autoChecks[s.id] === "yes");
+  const allYes = steps.every((s) => autoChecks[s.id] === "yes");
 
   let verdict: Verdict = "WAIT";
   if (sessionClosed) verdict = "CLOSED";
   else if (anyNo) verdict = "REJECT";
   else if (allYes && rrOk && !day?.needPause) verdict = "AUTHORIZED";
 
-  const pendingStep = pb.steps.find((s) => autoChecks[s.id] !== "yes" && autoChecks[s.id] !== "no");
-  const failedStep = pb.steps.find((s) => autoChecks[s.id] === "no");
+  const pendingStep = steps.find((s) => autoChecks[s.id] !== "yes" && autoChecks[s.id] !== "no");
+  const failedStep = steps.find((s) => autoChecks[s.id] === "no");
   let whyNot: string | null = null;
   if (sessionClosed) {
     if (account?.blocked) whyNot = account.reason || "Travão diário da conta atingido.";
@@ -262,7 +280,7 @@ export default function SessaoPage() {
   const canSave = whyNot == null;
 
   const setCheck = (id: string, v: Check) => {
-    const step = pb.steps.find((s) => s.id === id);
+    const step = steps.find((s) => s.id === id);
     if (step?.kind === "news" && blackout && v === "yes") return;
     setChecks((c) => ({ ...c, [id]: v }));
   };
@@ -276,7 +294,7 @@ export default function SessaoPage() {
     setSaveMsg("");
     const sleepQ = Math.min(10, Math.max(1, Math.round(Number(sleepHours) || 7)));
     const stressN = Math.min(10, Math.max(1, Math.round(Number(stress) || 3)));
-    const stepsDone = pb.steps
+    const stepsDone = steps
       .filter((s) => autoChecks[s.id] === "yes")
       .map((s, i) => `${i + 1}. ${s.label}`)
       .join(" | ");
@@ -303,7 +321,7 @@ export default function SessaoPage() {
       entry_reason: `Mesa de Operação — passos confirmados: ${stepsDone}`,
       shock_timeframe: asset === "XAUUSD" ? "M5" : "M1",
       management: pb.management.join(" "),
-      tags: `sessao,autorizado,${spec.broker}${pb.status === "observacao" ? ",demo" : ""}`,
+      tags: `sessao,autorizado,${spec.broker}${pb.status === "observacao" ? ",demo" : ""}${fromSignal ? `,signal:${fromSignal.id}` : ""}`,
       mental_state: grade,
       sleep_quality: sleepQ,
       fatigue_level: sleepQ <= 6 ? 7 : 3,
@@ -316,17 +334,20 @@ export default function SessaoPage() {
       pre_session_notes: `Sono ${sleepHours}h · stress ${stress}/10 · nota ${grade}`,
     };
     try {
+      // Vindo de um sinal, a linha "Pendente de Validação" já existe: valida-a em vez de duplicar.
+      const pendingId = fromSignal?.tradeId ?? null;
       const r = await fetch("/api/trades", {
-        method: "POST",
+        method: pendingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(pendingId ? { ...payload, id: pendingId } : payload),
       });
       const d = await r.json().catch(() => ({})) as { id?: number; error?: string };
       if (!r.ok) {
         setSaveMsg("Erro a guardar: " + (d.error || r.status));
       } else {
-        setSavedId(typeof d.id === "number" ? d.id : null);
-        setSaveMsg("Trade gravado no journal.");
+        setSavedId(typeof d.id === "number" ? d.id : pendingId);
+        setSaveMsg(pendingId ? "Sinal validado no journal." : "Trade gravado no journal.");
+        setFromSignal(null);
         setChecks(emptyChecks(pb));
         setOutcome("RUNNING");
         setExitPrice("");
@@ -380,6 +401,33 @@ export default function SessaoPage() {
             Atualizar
           </button>
         </div>
+      </div>
+
+      {/* Estratégia: os passos da lista são os da estratégia do motor escolhida */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, color: C.muted, letterSpacing: 1 }}>ESTRATÉGIA</span>
+        {playbooksForAsset(asset).map((p) => (
+          <button
+            key={p.strategyId}
+            onClick={() => switchStrategy(p.strategyId, null)}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              border: `1px solid ${strategyId === p.strategyId ? C.accent : C.border}`,
+              background: strategyId === p.strategyId ? "#0f4c3a" : C.card,
+              color: strategyId === p.strategyId ? C.accent : C.secondary,
+            }}
+          >
+            {p.title}
+          </button>
+        ))}
+        {fromSignal && (
+          <span style={{ fontSize: 11, color: C.green, marginLeft: 8 }}>
+            Carregado do sinal #{fromSignal.id}: os passos do motor já vêm a SIM. Falta confirmar os manuais.
+          </span>
+        )}
       </div>
 
       {pb.status === "observacao" && (
@@ -521,8 +569,8 @@ export default function SessaoPage() {
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
           <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5, marginBottom: 14 }}>LISTA DE PASSOS — SÓ AVANÇAS DEPOIS DE MARCAR SIM NO ANTERIOR</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {pb.steps.map((step, i) => {
-              const locked = i > 0 && autoChecks[pb.steps[i - 1].id] !== "yes";
+            {steps.map((step, i) => {
+              const locked = i > 0 && autoChecks[steps[i - 1].id] !== "yes";
               const val = autoChecks[step.id];
               const newsLockedYes = step.kind === "news" && blackout;
               return (
@@ -546,6 +594,9 @@ export default function SessaoPage() {
                       }}>{i + 1}</div>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.35 }}>{step.label}</div>
+                        {fromSignal && step.engineStep && val === "yes" ? (
+                          <div style={{ fontSize: 11, color: C.green, marginTop: 4 }}>✓ Confirmado pelo motor no sinal #{fromSignal.id}. Podes marcar NÃO se o gráfico da corretora não concordar.</div>
+                        ) : (<>
                         <div style={{ fontSize: 10, color: C.accent, marginTop: 6 }}>Onde: {step.chart}</div>
                         <div style={{ fontSize: 12, color: C.secondary, marginTop: 6, lineHeight: 1.55 }}>
                           <span style={{ color: "#e2e8f0", fontWeight: 600 }}>O que fazer. </span>{step.do}
@@ -556,6 +607,7 @@ export default function SessaoPage() {
                         <div style={{ fontSize: 11, color: "#fca5a5", marginTop: 4, lineHeight: 1.5 }}>
                           <span style={{ fontWeight: 700 }}>Marca NÃO se: </span>{step.noIf}
                         </div>
+                        </>)}
                         {newsLockedYes && <div style={{ fontSize: 11, color: C.red, marginTop: 8 }}>Bloqueado: há uma notícia de alto impacto nos próximos 30 minutos.</div>}
                         {step.kind === "rr" && rr != null && (
                           <div style={{ fontSize: 11, color: rrOk ? C.green : C.red, marginTop: 8 }}>
