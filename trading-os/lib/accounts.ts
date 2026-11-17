@@ -2,11 +2,13 @@
  * Contas (prop firm ou corretora) e custos por trade (funções puras, usáveis no cliente e no servidor).
  */
 
+import type { PropRules } from "@/lib/prop-rules";
+
 export type AccountKind = "prop" | "broker";
 export type AccountCurrency = "EUR" | "USD";
 
-/** Conta onde operas: prop firm (ex.: FundingPips) ou corretora (ex.: Kraken). */
-export interface Account {
+/** Conta onde operas: prop firm (ex.: FundingPips) ou corretora (ex.: Kraken). Regras de prop firm em PropRules. */
+export interface Account extends Partial<PropRules> {
   /** Nome único da conta, ex.: "FundingPips" ou "Kraken". */
   name: string;
   kind: AccountKind;

@@ -277,6 +277,18 @@ async function migrateSignalJournal(): Promise<void> {
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Fase 3: regras de prop firm por conta.
+  await addColumns("trade_accounts", [
+    ["start_balance", "REAL"],
+    ["daily_dd_pct", "REAL"],
+    ["max_dd_pct", "REAL"],
+    ["max_dd_type", "TEXT DEFAULT 'static'"],
+    ["profit_target_pct", "REAL"],
+    ["day_start_equity", "REAL"],
+    ["day_start_date", "TEXT"],
+    ["reset_hour_utc", "INTEGER DEFAULT 22"],
+    ["phase", "TEXT"],
+  ]);
   // Contas iniciais só numa base vazia: ouro no desafio FundingPips, SOL na Kraken.
   const n = await db.execute("SELECT COUNT(*) AS n FROM trade_accounts");
   if (Number((n.rows[0] as any)?.n) === 0) {
@@ -288,6 +300,12 @@ async function migrateSignalJournal(): Promise<void> {
       "write"
     );
   }
+  // Desafio FundingPips 5k Two Step (Fase 1): 5% diário do equity de início do dia, 10% total estático, target 8%.
+  await db.execute(
+    `UPDATE trade_accounts SET start_balance=5000, daily_dd_pct=5, max_dd_pct=10, max_dd_type='static',
+       profit_target_pct=8, reset_hour_utc=22, phase='Fase 1'
+     WHERE name='FundingPips' AND kind='prop' AND start_balance IS NULL`
+  );
 }
 
 export async function getSetting(key: string): Promise<string | null> {

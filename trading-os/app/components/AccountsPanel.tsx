@@ -88,7 +88,8 @@ export default function AccountsPanel({
       {open && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           {accounts.map((a) => (
-            <div key={a.name} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.7fr 1fr 1.2fr auto", gap: 6, alignItems: "center" }}>
+            <div key={a.name}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.7fr 1fr 1.2fr auto", gap: 6, alignItems: "center" }}>
               <span style={{ color: "#e2e8f0", fontWeight: 500 }}>{a.name}</span>
               <select value={a.kind} onChange={(e) => run("PUT", { name: a.name, kind: e.target.value })} style={sel}>
                 <option value="prop">Prop firm</option>
@@ -116,6 +117,8 @@ export default function AccountsPanel({
               >
                 ✕
               </button>
+            </div>
+            {a.kind === "prop" && <RulesRow account={a} onSave={(rules) => run("PUT", { name: a.name, rules })} />}
             </div>
           ))}
           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.7fr auto", gap: 6, marginTop: 4 }}>
@@ -145,6 +148,57 @@ export default function AccountsPanel({
         </div>
       )}
       {err && <div style={{ color: C.red, marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
+/** Regras da prop firm (gravam ao sair de cada campo). Valores em % excepto tamanho, início do dia e hora. */
+function RulesRow({ account: a, onSave }: { account: Account; onSave: (rules: Record<string, unknown>) => void }) {
+  const field = (key: keyof Account, label: string, step = "any", width = 70) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 9, color: C.muted }}>
+      {label}
+      <input
+        key={`${a.name}-${key}-${String(a[key] ?? "")}`}
+        type="number"
+        step={step}
+        defaultValue={a[key] == null ? "" : String(a[key])}
+        onBlur={(e) => {
+          const v = e.target.value;
+          if (v === String(a[key] ?? "")) return;
+          onSave({ [key]: v === "" ? null : Number(v) });
+        }}
+        style={{ background: C.card, color: C.secondary, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 5px", fontSize: 11, width }}
+      />
+    </label>
+  );
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", margin: "4px 0 8px 12px", paddingLeft: 8, borderLeft: `2px solid ${C.border}` }}>
+      {field("start_balance", "TAMANHO", "1", 80)}
+      {field("daily_dd_pct", "DIÁRIO %", "0.1", 60)}
+      {field("max_dd_pct", "TOTAL %", "0.1", 60)}
+      <label style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 9, color: C.muted }}>
+        TIPO TOTAL
+        <select
+          value={a.max_dd_type ?? "static"}
+          onChange={(e) => onSave({ max_dd_type: e.target.value })}
+          style={{ background: C.card, color: C.secondary, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 5px", fontSize: 11 }}
+        >
+          <option value="static">Estático</option>
+          <option value="trailing">Trailing</option>
+        </select>
+      </label>
+      {field("profit_target_pct", "TARGET %", "0.1", 60)}
+      {field("day_start_equity", "INÍCIO DO DIA", "0.01", 90)}
+      {field("reset_hour_utc", "RESET (H UTC)", "1", 60)}
+      <label style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 9, color: C.muted }}>
+        FASE
+        <input
+          key={`${a.name}-phase-${a.phase ?? ""}`}
+          defaultValue={a.phase ?? ""}
+          onBlur={(e) => e.target.value !== (a.phase ?? "") && onSave({ phase: e.target.value })}
+          style={{ background: C.card, color: C.secondary, border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 5px", fontSize: 11, width: 80 }}
+        />
+      </label>
     </div>
   );
 }

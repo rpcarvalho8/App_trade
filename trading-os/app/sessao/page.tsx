@@ -22,6 +22,7 @@ import {
 } from "@/lib/risk";
 import { accountForSymbolIn, KIND_LABEL, usdPerAccountUnit, type Account } from "@/lib/accounts";
 import AccountsPanel from "@/app/components/AccountsPanel";
+import { propRiskBlock, propStatus } from "@/lib/prop-rules";
 
 const C = {
   accent: "#4af0c4",
@@ -106,6 +107,12 @@ export default function SessaoPage() {
   const [usdPerUnit, setUsdPerUnit] = useState("1");
   /** Contas (prop firm ou corretora) guardadas no servidor (/api/accounts) e EUR/USD automático. */
   const [accounts, setAccounts] = useState<Account[]>([]);
+  /** Relógio para o dia da prop firm (reset diário); actualiza a cada minuto. */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
   const [eurusd, setEurusd] = useState<number | null>(null);
   const [sleepHours, setSleepHours] = useState("7");
   const [stress, setStress] = useState("3");
@@ -250,11 +257,14 @@ export default function SessaoPage() {
   const levelErrors = entry && sl ? validateLevels(direction, nEntry, nSl, tp ? nTp : null) : [];
   const suggestedTp = entry && sl ? suggestTakeProfit(direction, nEntry, nSl, Math.max(RISK_RULES.targetRR, pb.minRR)) : null;
   const account = ctx?.account ?? null;
+  // Regras da prop firm da conta deste activo (perda diária, perda total, profit target).
+  const prop = acct ? propStatus(acct, now) : null;
+  const propBlock = propRiskBlock(prop, size?.ok ? size.actualRisk : null);
 
   const blackout = asset === "XAUUSD" ? !!ctx?.calendar?.blackoutUSD : !!ctx?.calendar?.blackoutAll;
   const day = ctx?.byAsset?.[asset];
   const mentalClosed = Number(sleepHours) < 6 || Number(stress) > 7 || grade === "D";
-  const sessionClosed = !!day?.closed || mentalClosed || !!account?.blocked;
+  const sessionClosed = !!day?.closed || mentalClosed || !!account?.blocked || !!prop?.breached || !!prop?.passed;
 
   const autoChecks = useMemo(() => {
     const next = { ...checks };
@@ -290,7 +300,8 @@ export default function SessaoPage() {
   const failedStep = steps.find((s) => autoChecks[s.id] === "no");
   let whyNot: string | null = null;
   if (sessionClosed) {
-    if (account?.blocked) whyNot = account.reason || "Travão diário da conta atingido.";
+    if (prop?.breached || prop?.passed) whyNot = prop.reason || "Limite da prop firm atingido.";
+    else if (account?.blocked) whyNot = account.reason || "Travão diário da conta atingido.";
     else if (mentalClosed) whyNot = "Sessão fechada: sono abaixo de 6 h, stress acima de 7 ou nota D.";
     else if (day?.hitMaxTrades) whyNot = "Já atingiste o máximo de trades deste activo hoje.";
     else if (day?.hitDD) whyNot = "O limite de perdas do dia neste activo foi atingido.";
@@ -313,6 +324,8 @@ export default function SessaoPage() {
     whyNot = `Risco de ${nRisk}% acima do máximo de ${RISK_RULES.maxRiskPct}% por trade.`;
   } else if (size && !size.ok) {
     whyNot = size.reason || "O lote mínimo excede o risco permitido.";
+  } else if (propBlock) {
+    whyNot = propBlock;
   }
   const canSave = whyNot == null;
 
@@ -733,6 +746,54 @@ export default function SessaoPage() {
                 </button>
               </div>
             </div>
+            {prop && (
+              <div style={{ marginTop: 10, background: C.elevated, border: `1px solid ${prop.breached ? C.red : propBlock ? C.amber : C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
+                <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1, marginBottom: 6 }}>
+                  REGRAS {prop.account.toUpperCase()}{prop.phase ? ` · ${prop.phase.toUpperCase()}` : ""}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+                  {prop.dailyRemaining != null && (
+                    <div>
+                      <div style={{ color: C.muted, fontSize: 9 }}>PERDA DIÁRIA · FALTAM</div>
+                      <div style={{ color: prop.dailyRemaining <= 0 ? C.red : prop.dailyLimit && prop.dailyRemaining < prop.dailyLimit * 0.5 ? C.amber : C.green, fontWeight: 600, fontSize: 14 }}>
+                        {prop.dailyRemaining.toFixed(2)} <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}>de {prop.dailyLimit?.toFixed(2)}</span>
+                      </div>
+                      <div style={{ color: C.muted, fontSize: 9 }}>mínimo hoje {prop.dailyFloor?.toFixed(2)} · início {prop.dayStart.toFixed(2)}</div>
+                    </div>
+                  )}
+                  {prop.totalRemaining != null && (
+                    <div>
+                      <div style={{ color: C.muted, fontSize: 9 }}>PERDA TOTAL · FALTAM</div>
+                      <div style={{ color: prop.totalRemaining <= 0 ? C.red : C.secondary, fontWeight: 600, fontSize: 14 }}>
+                        {prop.totalRemaining.toFixed(2)} <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}>de {prop.totalLimit?.toFixed(2)}</span>
+                      </div>
+                      <div style={{ color: C.muted, fontSize: 9 }}>saldo mínimo {prop.totalFloor?.toFixed(2)}</div>
+                    </div>
+                  )}
+                  {prop.target != null && (
+                    <div>
+                      <div style={{ color: C.muted, fontSize: 9 }}>PROFIT TARGET</div>
+                      <div style={{ color: prop.passed ? C.green : C.secondary, fontWeight: 600, fontSize: 14 }}>
+                        {prop.profit.toFixed(2)} <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}>de {prop.target.toFixed(2)} ({(prop.progressPct ?? 0).toFixed(1)}%)</span>
+                      </div>
+                    </div>
+                  )}
+                  {prop.maxRiskMoney != null && (
+                    <div>
+                      <div style={{ color: C.muted, fontSize: 9 }}>RISCO MÁX. NESTA TRADE</div>
+                      <div style={{ color: propBlock ? C.red : C.secondary, fontWeight: 600, fontSize: 14 }}>
+                        {prop.maxRiskMoney.toFixed(2)}
+                        {size?.ok ? <span style={{ color: C.muted, fontSize: 9, fontWeight: 400 }}> · esta arrisca {size.actualRisk.toFixed(2)}</span> : null}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {(prop.reason || propBlock) && <div style={{ color: prop.breached || propBlock ? C.red : C.green, marginTop: 6 }}>{propBlock || prop.reason}</div>}
+                <div style={{ color: C.muted, fontSize: 9, marginTop: 6 }}>
+                  Usa o equity actual da conta (campo Capital). Mantém-no igual ao dashboard da prop firm.
+                </div>
+              </div>
+            )}
             <AccountsPanel accounts={accounts} asset={asset} onChange={setAccounts} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
               <div style={{ background: C.elevated, borderRadius: 6, padding: 10, border: `1px solid ${rrOk ? C.green + "44" : C.border}` }}>

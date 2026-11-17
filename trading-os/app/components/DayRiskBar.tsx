@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { RISK_RULES, type DailyGuard } from "@/lib/risk";
+import type { PropStatus } from "@/lib/prop-rules";
 
 type Account = (DailyGuard & { equity: number }) | null;
 
@@ -12,15 +13,17 @@ type Account = (DailyGuard & { equity: number }) | null;
 export default function DayRiskBar() {
   const [account, setAccount] = useState<Account>(null);
   const [hasEquity, setHasEquity] = useState(true);
+  const [prop, setProp] = useState<PropStatus[]>([]);
 
   useEffect(() => {
     // O capital vem das contas guardadas no servidor (prop firms e corretoras), não do browser.
     const load = () => {
       fetch("/api/session")
         .then((r) => (r.ok ? r.json() : null))
-        .then((d: { account?: Account } | null) => {
+        .then((d: { account?: Account; prop?: PropStatus[] } | null) => {
           setHasEquity(!!d?.account && d.account.equity > 0);
           setAccount(d?.account ?? null);
+          setProp(d?.prop ?? []);
         })
         .catch(() => {});
     };
@@ -38,7 +41,9 @@ export default function DayRiskBar() {
   }
   if (!account) return null;
 
-  const blocked = account.blocked;
+  const propBreach = prop.find((p) => p.breached);
+  const blocked = account.blocked || !!propBreach;
+  const reason = account.blocked ? account.reason : propBreach?.reason;
   const pnlColor = account.dayPnl >= 0 ? "#4ade80" : "#f87171";
   return (
     <div style={{ display: "flex", gap: 18, fontSize: 11, color: "#64748b", alignItems: "center" }}>
@@ -57,8 +62,40 @@ export default function DayRiskBar() {
           {account.consecutiveLosses} / {RISK_RULES.maxConsecutiveLosses}
         </span>
       </span>
+      {prop.map((p) => {
+        const dayPct = p.dailyLimit ? Math.max(0, p.dailyLimit - (p.dailyRemaining ?? 0)) / p.dailyLimit : 0;
+        const tight = p.maxRiskMoney != null && p.dailyLimit ? p.maxRiskMoney < p.dailyLimit * 0.3 : false;
+        return (
+          <span
+            key={p.account}
+            title={[
+              p.dailyFloor != null ? `Perda diária: faltam ${p.dailyRemaining} (mínimo de hoje ${p.dailyFloor})` : "",
+              p.totalFloor != null ? `Perda total: faltam ${p.totalRemaining} (mínimo ${p.totalFloor})` : "",
+              p.target != null ? `Profit target: ${p.profit} de ${p.target}` : "",
+            ].filter(Boolean).join("\n")}
+            style={{ display: "inline-flex", gap: 8, alignItems: "center" }}
+          >
+            <span style={{ color: "#94a3b8" }}>{p.account}</span>
+            {p.dailyRemaining != null && (
+              <span>
+                dia <span style={{ color: p.breached || tight ? "#f87171" : dayPct > 0.5 ? "#fbbf24" : "#4ade80", fontWeight: 600 }}>{p.dailyRemaining.toFixed(0)}</span>
+              </span>
+            )}
+            {p.totalRemaining != null && (
+              <span>
+                total <span style={{ color: "#94a3b8", fontWeight: 600 }}>{p.totalRemaining.toFixed(0)}</span>
+              </span>
+            )}
+            {p.progressPct != null && (
+              <span>
+                target <span style={{ color: p.passed ? "#4ade80" : "#94a3b8", fontWeight: 600 }}>{p.progressPct.toFixed(1)}%</span>
+              </span>
+            )}
+          </span>
+        );
+      })}
       <span
-        title={account.reason || ""}
+        title={reason || ""}
         style={{
           padding: "3px 10px",
           borderRadius: 4,
