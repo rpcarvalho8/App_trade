@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { initDB, db } from "@/lib/db";
+import { initDB, db, setSetting } from "@/lib/db";
 import { fetchCalendar, todayISO } from "@/lib/morning-brief";
 import { canonicalizePair } from "@/lib/pairs";
 import { PLAYBOOKS, type SessionAsset } from "@/lib/playbooks";
@@ -51,7 +51,12 @@ function minutesUntil(iso: string): number | null {
 export async function GET(req: Request) {
   await initDB();
   const date = todayISO();
-  const equity = Number(new URL(req.url).searchParams.get("equity"));
+  const params = new URL(req.url).searchParams;
+  const equity = Number(params.get("equity"));
+  // O motor de sinais lê daqui o capital para sugerir o lote e o stop máximo.
+  if (Number.isFinite(equity) && equity > 0) await setSetting("equity", String(equity)).catch(() => {});
+  const fx = Number(params.get("usd_per_unit"));
+  if (Number.isFinite(fx) && fx > 0) await setSetting("usd_per_account_unit", String(fx)).catch(() => {});
 
   const [prices, cal] = await Promise.all([
     fetchPrices(),
@@ -77,7 +82,7 @@ export async function GET(req: Request) {
 
   const tradesRes = await db.execute({
     sql: `SELECT id, date, pair, direction, setup, session, outcome, pnl, risk_percent, created_at
-          FROM trades WHERE date = ? ORDER BY id DESC`,
+          FROM trades WHERE date = ? AND outcome != 'PENDING' ORDER BY id DESC`,
     args: [date],
   });
   // Travão da conta inteira, com o P&L real das trades fechadas de hoje (mais antiga primeiro).

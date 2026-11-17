@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     if (r.rows.length === 0) return NextResponse.json(null);
     // Also fetch trades for this week
     const trades = await db.execute({
-      sql: "SELECT * FROM trades WHERE date >= ? AND date <= ? ORDER BY date",
+      sql: "SELECT * FROM trades WHERE date >= ? AND date <= ? AND outcome != 'PENDING' ORDER BY date",
       args: [week, (r.rows[0] as any).week_end]
     });
     return NextResponse.json({ journal: r.rows[0], trades: trades.rows });
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   const b = await req.json();
   // Calculate stats from trades in this week
   const tradesRes = await db.execute({
-    sql: "SELECT * FROM trades WHERE date >= ? AND date <= ? AND outcome != 'RUNNING'",
+    sql: "SELECT * FROM trades WHERE date >= ? AND date <= ? AND outcome IN ('WIN','LOSS','BE')",
     args: [b.week_start, b.week_end]
   });
   const trades = tradesRes.rows as any[];

@@ -203,9 +203,103 @@ export async function initDB() {
     await db.execute("ALTER TABLE principles ADD COLUMN active INTEGER DEFAULT 1");
   }
 
+  await migrateSignalJournal();
   await seedSetups();
+  await linkSetupsToEngine();
   await ensurePrinciples();
   await deactivateLegacyChockPrinciple();
+}
+
+/** Acrescenta colunas que faltem (migração aditiva, nunca apaga dados). */
+async function addColumns(table: string, cols: Array<[string, string]>): Promise<void> {
+  const info = await db.execute(`PRAGMA table_info(${table})`);
+  const have = new Set(info.rows.map((r: any) => String(r.name)));
+  for (const [name, def] of cols) {
+    if (!have.has(name)) await db.execute(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
+  }
+}
+
+/**
+ * Sinais do motor → journal.
+ *  - trades: linha com outcome='PENDING' ("Pendente de Validação") criada no momento do sinal.
+ *  - signal_events: contra-triggers (invalidação, expiração, sinal oposto) ligados ao sinal original,
+ *    NUNCA como trade nova (não entram em Win Rate nem Profit Factor).
+ *  - settings: capital da conta guardado no servidor, para o motor calcular o lote.
+ */
+async function migrateSignalJournal(): Promise<void> {
+  await addColumns("trades", [
+    ["signal_id", "INTEGER"],
+    ["signal_status", "TEXT DEFAULT ''"],
+    ["tp1", "REAL"],
+    ["lot_suggested", "REAL"],
+    ["max_stop", "REAL"],
+    ["executable", "INTEGER"],
+    ["expires_at", "TEXT"],
+    ["invalidation_price", "REAL"],
+  ]);
+  await addColumns("signals", [
+    ["status", "TEXT DEFAULT 'active'"],
+    ["expires_at", "TEXT"],
+    ["invalidation_price", "REAL"],
+    ["trade_id", "INTEGER"],
+  ]);
+  await addColumns("setups", [["engine_strategies", "TEXT DEFAULT '[]'"]]);
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS signal_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      signal_id INTEGER NOT NULL,
+      trade_id INTEGER,
+      strategy_id TEXT,
+      symbol TEXT,
+      type TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      price REAL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_signal_events_signal ON signal_events(signal_id);
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+}
+
+export async function getSetting(key: string): Promise<string | null> {
+  const r = await db.execute({ sql: "SELECT value FROM settings WHERE key=?", args: [key] });
+  const v = (r.rows[0] as any)?.value;
+  return v == null ? null : String(v);
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO settings (key,value,updated_at) VALUES (?,?,datetime('now'))
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    args: [key, value],
+  });
+}
+
+/**
+ * Liga cada setup do catálogo às estratégias que o motor corre (ids em lib/strategies/*.json).
+ * O "Liquidity Sweep" não é um motor próprio: é um passo do London Structure (XAU) e do SMC 3-Step (SOL).
+ */
+export const SETUP_ENGINE_LINKS: Record<string, string[]> = {
+  "XAUUSD — London Structure": ["xauusd-london-structure"],
+  "SMC 3-Step Scalping": ["solusd-smc-3step"],
+  "HTF Imbalance Rotation": ["xauusd-htf-rotation", "solusd-htf-rotation"],
+  "Liquidity Sweep": ["xauusd-london-structure", "solusd-smc-3step"],
+};
+
+async function linkSetupsToEngine(): Promise<void> {
+  for (const [name, ids] of Object.entries(SETUP_ENGINE_LINKS)) {
+    await db.execute({ sql: "UPDATE setups SET engine_strategies=? WHERE name=?", args: [JSON.stringify(ids), name] });
+  }
+  // O sweep genérico era de Forex; no motor só corre em XAUUSD e SOLUSD.
+  await db.execute({
+    sql: `UPDATE setups SET markets='XAUUSD, SOLUSD',
+            description='Sweep de liquidez (BSL/SSL) com fecho de volta. No motor é o passo 3 do London Structure (XAU, M15) e o passo 1 do SMC 3-Step (SOL, 15m).'
+          WHERE name='Liquidity Sweep' AND markets='Forex'`,
+  });
 }
 
 async function seedSetups() {
@@ -313,6 +407,22 @@ async function seedSetups() {
       markets: "XAUUSD",
       confluence: "Bias H4 + Sweep M15 + MSS/CISD + OB/FVG M5 + R:R ≥ 2.0 + janela London/NY + sem notícia US 30m",
       invalidation: "Vela fecha através da zona | Notícia a sair | H4 vira contra | Fase B | R:R < 2.0 | 2 losses seguidos | 2 trades no dia | DD diário ≥ 1.5%",
+      image_refs: "[]"
+    },
+    {
+      name: "HTF Imbalance Rotation",
+      category: "SMC",
+      description: "Rotação entre FVG/OB frescas de H4/H1 a favor do bias, com entrada no MSS do M5. Corre no motor para XAUUSD e SOLUSD.",
+      steps: JSON.stringify([
+        "1. Calendário: sem notícia forte nos próximos 30 min.",
+        "2. Preço toca uma FVG ou OB fresca de H4/H1 a favor do bias (alerta ARMADO).",
+        "3. MSS no M5 dentro da zona (sinal com PE/SL/TP).",
+        "4. SL no extremo do toque; TP na zona oposta, entre 2R e 4R.",
+      ]),
+      timeframes: "H4 (bias) | H1 (zonas) | M5 (entrada)",
+      markets: "XAUUSD, SOLUSD",
+      confluence: "Bias H4 + zona H4/H1 fresca + MSS M5 + R:R ≥ 2",
+      invalidation: "Zona partida (M15 fecha para lá) | bias H4 muda | notícia forte",
       image_refs: "[]"
     },
     {

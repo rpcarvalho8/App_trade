@@ -4,7 +4,7 @@ import { canonicalizePair } from "@/lib/pairs";
 import { deriveOutcome, realizedR, validateTrade, type Side } from "@/lib/risk";
 
 const TRADE_FIELDS = ["date","pair","direction","setup","session","entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","outcome","elliott_wave","wyckoff_phase","wyckoff_event","imbalance_zone","htf_bias","confluences","entry_reason","shock_type","shock_timeframe","management","lesson","notes","screenshot_before","screenshot_after","screenshot_entry","tags","mental_state","followed_plan","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level","emotional_state","pre_session_notes","post_trade_emotion"] as const;
-const TRADE_FIELD_SET = new Set<string>(TRADE_FIELDS);
+const TRADE_FIELD_SET = new Set<string>([...TRADE_FIELDS, "signal_status"]);
 const NUM_FIELDS = new Set(["entry","exit_price","stop_loss","take_profit","risk_percent","pnl","rr_planned","rr_real","sleep_quality","fatigue_level","stress_level","anxiety_level","focus_level","confidence_level"]);
 /** Campos que, se mudarem, obrigam a validar de novo a trade inteira. */
 const LEVEL_FIELDS = ["pair","direction","entry","stop_loss","take_profit","exit_price","pnl","outcome"];
@@ -13,7 +13,7 @@ const num = (v: unknown): number | null => (v === null || v === undefined || v =
 
 /** Resultado e R realizado derivados dos números, para não contradizerem o P&L. */
 function deriveClosedFields(t: Record<string, unknown>) {
-  if (t.outcome === "RUNNING") return;
+  if (t.outcome === "RUNNING" || t.outcome === "PENDING") return;
   const pnl = num(t.pnl);
   if (pnl != null) t.outcome = deriveOutcome(pnl);
   const entry = num(t.entry), sl = num(t.stop_loss), exit = num(t.exit_price);
@@ -44,8 +44,10 @@ export async function GET(req: NextRequest) {
   const conds: string[] = [];
   if (setup) { conds.push("setup=?"); args.push(setup); }
   if (outcome) { conds.push("outcome=?"); args.push(outcome); }
+  // Sinais por validar só aparecem quando pedidos (journal) — nunca em estatísticas nem no Overview.
+  else if (searchParams.get("include_pending") !== "1") conds.push("outcome != 'PENDING'");
   if (conds.length) sql += " WHERE "+conds.join(" AND ");
-  sql += " ORDER BY date DESC, id DESC LIMIT ?";
+  sql += " ORDER BY CASE WHEN outcome='PENDING' THEN 0 ELSE 1 END, date DESC, id DESC LIMIT ?";
   args.push(parseInt(limit));
   const result = await db.execute({ sql, args });
   return NextResponse.json(result.rows);
@@ -91,6 +93,10 @@ export async function PUT(req: NextRequest) {
     deriveClosedFields(merged);
     if ("outcome" in rest || "pnl" in rest) rest.outcome = merged.outcome;
     if (merged.rr_real != null && ("exit_price" in rest || "entry" in rest || "stop_loss" in rest)) rest.rr_real = merged.rr_real;
+    // Sinal pendente confirmado (passou a RUNNING/WIN/LOSS/BE): fica validado e entra nas estatísticas.
+    if (cur.rows[0] && (cur.rows[0] as Record<string, unknown>).outcome === "PENDING" && merged.outcome !== "PENDING") {
+      rest.signal_status = "validated";
+    }
   }
   const keys = Object.keys(rest).filter((k) => TRADE_FIELD_SET.has(k));
   if (!keys.length) return NextResponse.json({ error: "No valid fields" }, { status: 400 });

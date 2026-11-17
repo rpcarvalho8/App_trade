@@ -112,11 +112,17 @@ export default function SessaoPage() {
     setLoading(false);
   };
 
-  const sessionUrl = (eq: string) => (Number(eq) > 0 ? `/api/session?equity=${encodeURIComponent(eq)}` : "/api/session");
+  const sessionUrl = (eq: string, fx?: string) => {
+    const q = new URLSearchParams();
+    if (Number(eq) > 0) q.set("equity", eq);
+    if (Number(fx) > 0) q.set("usd_per_unit", String(fx));
+    const qs = q.toString();
+    return qs ? `/api/session?${qs}` : "/api/session";
+  };
 
   const load = (showSpinner = false) => {
     if (showSpinner) setLoading(true);
-    fetch(sessionUrl(equity))
+    fetch(sessionUrl(equity, usdPerUnit))
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<SessionCtx>;
@@ -131,11 +137,22 @@ export default function SessaoPage() {
   useEffect(() => {
     const eq = readLocal("tos_equity", "");
     const fx = readLocal("tos_usd_per_unit", "1");
+    // "Carregar na Mesa" (/signals): /sessao?asset=XAUUSD&dir=LONG&entry=…&sl=…&tp=…
+    const qp = new URLSearchParams(window.location.search);
+    const qAsset = qp.get("asset");
+    if (qAsset === "XAUUSD" || qAsset === "SOLUSD") {
+      switchAsset(qAsset);
+      const qDir = (qp.get("dir") || "").toUpperCase();
+      if (qDir === "LONG" || qDir === "SHORT") setDirection(qDir);
+      if (qp.get("entry")) setEntry(String(qp.get("entry")));
+      if (qp.get("sl")) setSl(String(qp.get("sl")));
+      if (qp.get("tp")) setTp(String(qp.get("tp")));
+    }
     const restore = () => {
       setEquity(eq);
       setUsdPerUnit(fx);
     };
-    fetch(sessionUrl(eq))
+    fetch(sessionUrl(eq, fx))
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<SessionCtx>;

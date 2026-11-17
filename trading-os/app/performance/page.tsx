@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { computeMetrics, equityCurve, isClosedOutcome } from "@/lib/metrics";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, ReferenceLine, ScatterChart, Scatter } from "recharts";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
@@ -16,11 +17,13 @@ export default function PerformancePage() {
   const [stats, setStats] = useState<any>(null);
   const [trades, setTrades] = useState<any[]>([]);
   const [err, setErr] = useState("");
+  const [equityNow, setEquityNow] = useState(0);
 
   useEffect(()=>{
+    try { setEquityNow(Number(window.localStorage.getItem("tos_equity")) || 0); } catch { /* sem storage */ }
     Promise.all([
       fetch("/api/stats").then(r=>r.json()),
-      fetch("/api/trades?limit=200").then(r=>r.json()),
+      fetch("/api/trades?limit=5000").then(r=>r.json()),
     ]).then(([s,t])=>{setStats(s);setTrades(t);}).catch(e=>setErr(String(e)));
   },[]);
 
@@ -28,18 +31,19 @@ export default function PerformancePage() {
   if (!stats) return <div style={{color:C.muted,padding:40,textAlign:"center"}}>A carregar analytics...</div>;
 
   const s = stats.summary||{};
-  const wins = trades.filter(t=>t.outcome==="WIN").map(t=>Number(t.pnl));
-  const losses = trades.filter(t=>t.outcome==="LOSS").map(t=>Number(t.pnl));
-  const avgWin = wins.length?wins.reduce((a,b)=>a+b,0)/wins.length:0;
-  const avgLoss = losses.length?losses.reduce((a,b)=>a+b,0)/losses.length:0;
-  const profitFactor = avgLoss!==0?Math.abs(avgWin/avgLoss):0;
+  // Só trades fechadas (exclui RUNNING e sinais PENDING por validar).
+  const closedTrades = trades.filter(t=>isClosedOutcome(t.outcome));
+  const m = computeMetrics(closedTrades);
+  const pf = m.profitFactor;
+  const pfLabel = pf==null?"—":pf===Infinity?"∞":pf.toFixed(2);
 
-  let cum=0,peak=0;
-  const equityData=(stats.daily||[]).slice().reverse().map((d: any)=>{
-    cum+=Number(d.pnl||0);
-    peak=Math.max(peak,cum);
-    return {date:String(d.date||"").slice(5),pnl:Number(d.pnl||0),cumulative:parseFloat(cum.toFixed(2)),dd:peak>0?parseFloat(((cum-peak)/peak*100).toFixed(2)):0};
-  });
+  // Curva de capital por dia: capital inicial = capital actual − P&L total fechado.
+  const daily = stats.daily||[];
+  const totalPnl = daily.reduce((a: number,d: any)=>a+Number(d.pnl||0),0);
+  const startEquity = equityNow>0 ? equityNow - totalPnl : 0;
+  const curve = equityCurve(daily.map((d: any)=>({label:String(d.date||"").slice(5),pnl:Number(d.pnl||0)})), startEquity);
+  const equityData = curve.points.map(p=>({date:p.label,pnl:p.pnl,cumulative:p.equity,dd:p.ddPct}));
+  const ddLabel = startEquity>0 ? `-${curve.maxDrawdownPct.toFixed(1)}%` : `-$${curve.maxDrawdownMoney.toFixed(0)}`;
 
   const setupStats=(stats.bySetup||[]).map((x: any)=>({
     name:(x.setup||"").length>14?(x.setup||"").slice(0,14)+"…":(x.setup||""),
@@ -47,11 +51,11 @@ export default function PerformancePage() {
     pnl:Number(x.pnl||0),trades:x.total,rr:Number(x.avg_rr||0).toFixed(2),
   }));
 
-  const sorted=[...trades].filter(t=>t.outcome!=="RUNNING").reverse();
+  const sorted=[...closedTrades].reverse();
   let mxW=0,mxL=0,cW=0,cL=0;
   sorted.forEach(t=>{if(t.outcome==="WIN"){cW++;cL=0;mxW=Math.max(mxW,cW);}else if(t.outcome==="LOSS"){cL++;cW=0;mxL=Math.max(mxL,cL);}});
 
-  const rrData=trades.filter(t=>t.rr_planned&&t.rr_real&&t.outcome!=="RUNNING").map(t=>({planned:Number(t.rr_planned),real:Number(t.rr_real),outcome:t.outcome}));
+  const rrData=closedTrades.filter(t=>t.rr_planned&&t.rr_real).map(t=>({planned:Number(t.rr_planned),real:Number(t.rr_real),outcome:t.outcome}));
 
   const Stat=({label,value,color=C.secondary,sub}: any)=>(
     <div style={{background:C.elevated,borderRadius:6,padding:"12px 14px",border:`1px solid ${C.border}`}}>
@@ -65,18 +69,24 @@ export default function PerformancePage() {
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
       <div><div style={{fontSize:9,color:C.muted,letterSpacing:2}}>TRADING OS</div><div style={{fontSize:22,fontWeight:600,color:C.accent}}>Performance Analytics</div></div>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10}}>
+      {m.smallSample && m.trades>0 && (
+        <div style={{background:"#2a1f08",border:`1px solid ${C.amber}55`,color:C.amber,padding:"8px 12px",borderRadius:6,fontSize:11}}>
+          Amostra insuficiente: {m.trades} trades fechadas (mínimo 30 para conclusões fiáveis).
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
         <Stat label="NET P&L" value={`$${Number(s.total_pnl||0).toFixed(0)}`} color={Number(s.total_pnl||0)>=0?C.green:C.red}/>
-        <Stat label="WIN RATE" value={`${s.win_rate||0}%`} color={C.accent} sub={`${s.wins||0}W ${s.losses||0}L`}/>
-        <Stat label="PROFIT FACTOR" value={profitFactor.toFixed(2)} color={profitFactor>=1.5?C.green:profitFactor>=1?C.amber:C.red}/>
-        <Stat label="AVG WIN" value={`$${avgWin.toFixed(0)}`} color={C.green}/>
-        <Stat label="AVG LOSS" value={`$${avgLoss.toFixed(0)}`} color={C.red}/>
-        <Stat label="MAX WIN STREAK" value={mxW} color={C.green} sub="consecutivos"/>
-        <Stat label="MAX LOSS STREAK" value={mxL} color={C.red} sub="consecutivos"/>
+        <Stat label="WIN RATE" value={m.winRate==null?"—":`${m.winRate.toFixed(1)}%`} color={C.accent} sub={`${m.wins}W ${m.losses}L`}/>
+        <Stat label="PROFIT FACTOR" value={pfLabel} color={pf==null?C.muted:pf>=1.5?C.green:pf>=1?C.amber:C.red} sub="Σ ganhos / Σ perdas"/>
+        <Stat label="PAYOFF" value={m.payoff==null?"—":m.payoff.toFixed(2)} color={C.secondary} sub="ganho médio / perda média"/>
+        <Stat label="EXPECTÂNCIA" value={m.expectancyR==null?"—":`${m.expectancyR>=0?"+":""}${m.expectancyR.toFixed(2)}R`} color={m.expectancyR==null?C.muted:m.expectancyR>0?C.green:C.red} sub={m.expectancyMoney==null?undefined:`$${m.expectancyMoney.toFixed(1)} por trade`}/>
+        <Stat label="DRAWDOWN MÁX." value={ddLabel} color={C.red} sub={startEquity>0?"sobre o capital":"define o capital na Mesa para ver em %"}/>
+        <Stat label="GANHO / PERDA MÉDIA" value={`$${(m.avgWin??0).toFixed(0)} / $${(m.avgLoss??0).toFixed(0)}`} color={C.secondary}/>
+        <Stat label="SEQUÊNCIAS" value={`${mxW} / ${mxL}`} color={C.secondary} sub="máx. ganhos / perdas seguidas"/>
       </div>
 
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
-        <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>CURVA DE EQUITY — ACUMULADO</div>
+        <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>{startEquity>0?"CURVA DE CAPITAL":"CURVA DE EQUITY — P&L ACUMULADO"}</div>
         {equityData.length>0?(
           <ResponsiveContainer width="100%" height={180}>
             <AreaChart data={equityData}>
@@ -86,7 +96,7 @@ export default function PerformancePage() {
               <YAxis tick={{fontSize:9,fill:C.muted}}/>
               <Tooltip content={<Tip/>}/>
               <ReferenceLine y={0} stroke={C.border}/>
-              <Area type="monotone" dataKey="cumulative" name="P&L $" stroke={C.accent} fill="url(#eg2)" strokeWidth={2} dot={false}/>
+              <Area type="monotone" dataKey="cumulative" name={startEquity>0?"Capital":"P&L $"} stroke={C.accent} fill="url(#eg2)" strokeWidth={2} dot={false}/>
             </AreaChart>
           </ResponsiveContainer>
         ):<div style={{color:C.muted,fontSize:11,padding:40,textAlign:"center"}}>Sem dados de trades ainda.</div>}

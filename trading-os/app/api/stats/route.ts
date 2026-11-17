@@ -37,7 +37,7 @@ export async function GET() {
       COALESCE(AVG(CASE WHEN outcome='LOSS' THEN pnl END),0) as avg_loss,
       COALESCE(AVG(rr_real),0) as avg_rr,
       SUM(CASE WHEN followed_plan=0 THEN 1 ELSE 0 END) as violations
-    FROM trades WHERE outcome != 'RUNNING'
+    FROM trades WHERE outcome IN ('WIN','LOSS','BE')
   `);
 
   const bySetup = await db.execute(`
@@ -45,7 +45,7 @@ export async function GET() {
       SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins,
       COALESCE(SUM(pnl),0) as pnl,
       COALESCE(AVG(rr_real),0) as avg_rr
-    FROM trades WHERE outcome != 'RUNNING'
+    FROM trades WHERE outcome IN ('WIN','LOSS','BE')
     GROUP BY setup ORDER BY pnl DESC
   `);
 
@@ -53,7 +53,7 @@ export async function GET() {
     SELECT session, COUNT(*) as total,
       SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins,
       COALESCE(SUM(pnl),0) as pnl
-    FROM trades WHERE outcome != 'RUNNING'
+    FROM trades WHERE outcome IN ('WIN','LOSS','BE')
     GROUP BY session
   `);
 
@@ -61,14 +61,16 @@ export async function GET() {
     SELECT mental_state, COUNT(*) as total,
       SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins,
       COALESCE(SUM(pnl),0) as pnl
-    FROM trades WHERE outcome != 'RUNNING'
+    FROM trades WHERE outcome IN ('WIN','LOSS','BE')
     GROUP BY mental_state ORDER BY mental_state
   `);
 
   const daily = await db.execute(`
-    SELECT date, COALESCE(SUM(pnl),0) as pnl, COUNT(*) as trades
-    FROM trades WHERE outcome != 'RUNNING'
-    GROUP BY date ORDER BY date ASC LIMIT 60
+    SELECT * FROM (
+      SELECT date, COALESCE(SUM(pnl),0) as pnl, COUNT(*) as trades
+      FROM trades WHERE outcome IN ('WIN','LOSS','BE')
+      GROUP BY date ORDER BY date DESC LIMIT 90
+    ) ORDER BY date ASC
   `);
 
   const byPairRaw = await db.execute(`
@@ -76,7 +78,7 @@ export async function GET() {
       SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins,
       COALESCE(SUM(pnl),0) as pnl,
       COALESCE(AVG(rr_real),0) as avg_rr
-    FROM trades WHERE outcome != 'RUNNING'
+    FROM trades WHERE outcome IN ('WIN','LOSS','BE')
     GROUP BY pair
   `);
 
