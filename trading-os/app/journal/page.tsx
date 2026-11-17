@@ -329,7 +329,7 @@ function PendingSignals({ rows, highlightId, onValidate, onDiscard }: {
   return (
     <div style={{ background:"#1a1508",border:"1px solid #fbbf2455",borderRadius:10,padding:14 }}>
       <div style={{ fontSize:10,color:C.amber,letterSpacing:1.5,marginBottom:10,fontWeight:600 }}>
-        SINAIS DO MOTOR POR VALIDAR ({rows.length}) — confirma os números antes de pôr a ordem na XTB / Kraken
+        SINAIS DO MOTOR POR VALIDAR ({rows.length}) — confirma os números antes de pôr a ordem na plataforma da conta
       </div>
       <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
         {rows.map(t=>{

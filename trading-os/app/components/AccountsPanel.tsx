@@ -1,0 +1,150 @@
+"use client";
+
+import { useState } from "react";
+import { KIND_LABEL, type Account, type AccountCurrency, type AccountKind } from "@/lib/accounts";
+
+const C = {
+  card: "#0d1929",
+  elevated: "#111827",
+  border: "#1e2d45",
+  muted: "#475569",
+  secondary: "#94a3b8",
+  accent: "#4af0c4",
+  red: "#f87171",
+  amber: "#fbbf24",
+};
+
+type Resp = { accounts?: Account[]; error?: string };
+
+async function call(method: "PUT" | "DELETE", body: Record<string, unknown>): Promise<Resp> {
+  const url = method === "DELETE" ? `/api/accounts?name=${encodeURIComponent(String(body.name))}` : "/api/accounts";
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: method === "PUT" ? JSON.stringify(body) : undefined,
+  });
+  const d = (await r.json().catch(() => ({}))) as Resp;
+  if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+}
+
+/**
+ * Conta do activo na Mesa + gestão das contas (prop firm ou corretora).
+ * Mudar o activo de conta (ex.: SOL da Kraken para uma prop firm) é escolher outra conta no selector.
+ */
+export default function AccountsPanel({
+  accounts,
+  asset,
+  onChange,
+}: {
+  accounts: Account[];
+  asset: string;
+  onChange: (accounts: Account[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState("");
+  const [draft, setDraft] = useState<{ name: string; kind: AccountKind; currency: AccountCurrency }>({
+    name: "",
+    kind: "prop",
+    currency: "USD",
+  });
+  const current = accounts.find((a) => a.symbols.includes(asset)) ?? null;
+
+  const run = (method: "PUT" | "DELETE", body: Record<string, unknown>) => {
+    setErr("");
+    call(method, body)
+      .then((d) => d.accounts && onChange(d.accounts))
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  };
+
+  const assign = (name: string) => {
+    const target = accounts.find((a) => a.name === name);
+    if (!target) return;
+    run("PUT", { name, symbols: [...target.symbols, asset] });
+  };
+
+  const sel = { background: C.elevated, color: C.secondary, border: `1px solid ${C.border}`, borderRadius: 4, padding: "4px 6px", fontSize: 11 };
+
+  return (
+    <div style={{ marginTop: 10, background: C.elevated, border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 9, color: C.muted, letterSpacing: 1 }}>CONTA DO {asset}</span>
+        <select value={current?.name ?? ""} onChange={(e) => assign(e.target.value)} style={sel}>
+          {!current && <option value="">— sem conta —</option>}
+          {accounts.map((a) => (
+            <option key={a.name} value={a.name}>
+              {a.name} · {KIND_LABEL[a.kind]} · {a.currency}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          style={{ marginLeft: "auto", background: "transparent", color: C.accent, border: "none", cursor: "pointer", fontSize: 11 }}
+        >
+          {open ? "Fechar contas ▴" : "Gerir contas ▾"}
+        </button>
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          {accounts.map((a) => (
+            <div key={a.name} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.7fr 1fr 1.2fr auto", gap: 6, alignItems: "center" }}>
+              <span style={{ color: "#e2e8f0", fontWeight: 500 }}>{a.name}</span>
+              <select value={a.kind} onChange={(e) => run("PUT", { name: a.name, kind: e.target.value })} style={sel}>
+                <option value="prop">Prop firm</option>
+                <option value="broker">Corretora</option>
+              </select>
+              <select value={a.currency} onChange={(e) => run("PUT", { name: a.name, currency: e.target.value })} style={sel}>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+              </select>
+              <input
+                key={`${a.name}-${a.equity}`}
+                type="number"
+                step="1"
+                defaultValue={a.equity || ""}
+                placeholder="capital"
+                onBlur={(e) => e.target.value !== String(a.equity || "") && run("PUT", { name: a.name, equity: Number(e.target.value) || 0 })}
+                style={{ ...sel, width: "100%" }}
+              />
+              <span style={{ color: C.secondary }}>{a.symbols.length ? a.symbols.join(", ") : <span style={{ color: C.muted }}>sem activos</span>}</span>
+              <button
+                onClick={() => run("DELETE", { name: a.name })}
+                disabled={a.symbols.length > 0}
+                title={a.symbols.length ? "Passa os activos para outra conta antes de apagar" : "Apagar conta"}
+                style={{ background: "transparent", border: "none", color: a.symbols.length ? C.muted : C.red, cursor: a.symbols.length ? "not-allowed" : "pointer" }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.7fr auto", gap: 6, marginTop: 4 }}>
+            <input value={draft.name} placeholder="Nova conta (ex.: FTMO)" onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={{ ...sel, width: "100%" }} />
+            <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as AccountKind })} style={sel}>
+              <option value="prop">Prop firm</option>
+              <option value="broker">Corretora</option>
+            </select>
+            <select value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value as AccountCurrency })} style={sel}>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+            </select>
+            <button
+              disabled={!draft.name.trim()}
+              onClick={() => {
+                run("PUT", { ...draft, name: draft.name.trim(), symbols: [] });
+                setDraft({ name: "", kind: "prop", currency: "USD" });
+              }}
+              style={{ background: C.accent, color: "#0a1220", border: "none", borderRadius: 4, padding: "4px 10px", fontSize: 11, cursor: "pointer", opacity: draft.name.trim() ? 1 : 0.5 }}
+            >
+              Adicionar
+            </button>
+          </div>
+          <div style={{ fontSize: 9, color: C.muted }}>
+            Cada activo pertence a uma só conta. Para passar a SOL para uma prop firm, cria a conta e escolhe-a no selector com SOLUSD activo.
+          </div>
+        </div>
+      )}
+      {err && <div style={{ color: C.red, marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}

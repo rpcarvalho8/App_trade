@@ -99,7 +99,7 @@ function mkAlert(signal: EngineSignal, signalId: number, tradeId: number | null,
 }
 
 /**
- * Capital da conta da corretora do activo (ouro → XTB, SOL → Kraken), com câmbio automático.
+ * Capital da conta a que o activo está atribuído (prop firm ou corretora), com câmbio automático.
  * Recurso: o valor antigo guardado pela Mesa em settings.
  */
 async function accountForSizing(symbol: string) {

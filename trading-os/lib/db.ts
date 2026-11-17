@@ -262,21 +262,32 @@ async function migrateSignalJournal(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_signal_events_signal ON signal_events(signal_id);
-    CREATE TABLE IF NOT EXISTS accounts (
-      broker TEXT PRIMARY KEY,
-      currency TEXT NOT NULL DEFAULT 'EUR',
+    CREATE TABLE IF NOT EXISTS trade_accounts (
+      name TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'broker',
+      currency TEXT NOT NULL DEFAULT 'USD',
+      symbols TEXT NOT NULL DEFAULT '',
       equity REAL,
       peak_equity REAL,
       updated_at TEXT DEFAULT (datetime('now'))
     );
-    INSERT OR IGNORE INTO accounts (broker, currency) VALUES ('XTB', 'EUR');
-    INSERT OR IGNORE INTO accounts (broker, currency) VALUES ('Kraken', 'USD');
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Contas iniciais só numa base vazia: ouro no desafio FundingPips, SOL na Kraken.
+  const n = await db.execute("SELECT COUNT(*) AS n FROM trade_accounts");
+  if (Number((n.rows[0] as any)?.n) === 0) {
+    await db.batch(
+      [
+        { sql: "INSERT OR IGNORE INTO trade_accounts (name, kind, currency, symbols) VALUES (?,?,?,?)", args: ["FundingPips", "prop", "USD", "XAUUSD"] },
+        { sql: "INSERT OR IGNORE INTO trade_accounts (name, kind, currency, symbols) VALUES (?,?,?,?)", args: ["Kraken", "broker", "USD", "SOLUSD"] },
+      ],
+      "write"
+    );
+  }
 }
 
 export async function getSetting(key: string): Promise<string | null> {

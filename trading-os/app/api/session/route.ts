@@ -55,7 +55,7 @@ export async function GET(req: Request) {
   const date = todayISO();
   const params = new URL(req.url).searchParams;
   let equity = Number(params.get("equity"));
-  // Sem capital no pedido: capital total das contas no servidor (XTB + Kraken), em EUR.
+  // Sem capital no pedido: capital total das contas no servidor (prop firms + corretoras), em EUR.
   if (!(Number.isFinite(equity) && equity > 0)) {
     const [accts, eurusd] = await Promise.all([listAccounts().catch(() => []), getEurUsd().catch(() => null)]);
     equity = accts.reduce((sum, a) => sum + toEur(a.equity, a.currency, eurusd), 0);

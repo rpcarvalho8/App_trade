@@ -35,11 +35,12 @@ export interface InstrumentSpec {
 
 /**
  * Especificações dos instrumentos operados na Mesa.
- * XTB GOLD: 1 lote = 100 oz, mínimo 0,01 (1 oz ≈ 1 USD por cada 1 USD de movimento).
+ * XAUUSD na prop firm (MT5/cTrader): 1 lote = 100 oz, mínimo 0,01 (1 oz ≈ 1 USD por cada 1 USD de movimento).
+ * Confirmar o contrato no símbolo da plataforma da prop firm.
  * Kraken SOL perp: tamanho em SOL. Confirmar o mínimo no ticket da Kraken.
  */
 export const INSTRUMENTS: Record<"XAUUSD" | "SOLUSD", InstrumentSpec> = {
-  XAUUSD: { symbol: "XAUUSD", broker: "XTB", contractSize: 100, minLot: 0.01, lotStep: 0.01, lotLabel: "lotes" },
+  XAUUSD: { symbol: "XAUUSD", broker: "Prop firm", contractSize: 100, minLot: 0.01, lotStep: 0.01, lotLabel: "lotes" },
   SOLUSD: { symbol: "SOLUSD", broker: "Kraken Perp", contractSize: 1, minLot: 0.01, lotStep: 0.01, lotLabel: "SOL" },
 };
 

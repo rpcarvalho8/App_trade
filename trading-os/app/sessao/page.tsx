@@ -20,7 +20,8 @@ import {
   validateLevels,
   type DailyGuard,
 } from "@/lib/risk";
-import { brokerForSymbol, usdPerAccountUnit, type Account } from "@/lib/accounts";
+import { accountForSymbolIn, KIND_LABEL, usdPerAccountUnit, type Account } from "@/lib/accounts";
+import AccountsPanel from "@/app/components/AccountsPanel";
 
 const C = {
   accent: "#4af0c4",
@@ -103,7 +104,7 @@ export default function SessaoPage() {
   const [equity, setEquity] = useState("");
   /** Quantos USD vale 1 unidade da moeda da conta (1 se a conta for em USD). */
   const [usdPerUnit, setUsdPerUnit] = useState("1");
-  /** Contas por corretora guardadas no servidor (/api/accounts) e EUR/USD automático. */
+  /** Contas (prop firm ou corretora) guardadas no servidor (/api/accounts) e EUR/USD automático. */
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [eurusd, setEurusd] = useState<number | null>(null);
   const [sleepHours, setSleepHours] = useState("7");
@@ -147,9 +148,8 @@ export default function SessaoPage() {
       });
   };
 
-  // Capital e câmbio da conta da corretora deste activo (ouro → XTB, SOL → Kraken).
-  const broker = brokerForSymbol(asset);
-  const acct = accounts.find((a) => a.broker === broker) ?? null;
+  // Capital e câmbio da conta a que este activo está atribuído (ex.: ouro → FundingPips, SOL → Kraken).
+  const acct = accountForSymbolIn(accounts, asset);
   useEffect(() => {
     if (!acct) return;
     setEquity(acct.equity > 0 ? String(acct.equity) : "");
@@ -159,32 +159,27 @@ export default function SessaoPage() {
 
   const saveEquity = (value: string) => {
     const n = Number(value);
-    if (!broker || !(n >= 0) || value === "") return;
+    if (!acct || !(n >= 0) || value === "") return;
     fetch("/api/accounts", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ broker, equity: n }),
+      body: JSON.stringify({ name: acct.name, equity: n }),
     })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { account?: Account } | null) => {
-        if (d?.account) setAccounts((list) => list.map((a) => (a.broker === d.account!.broker ? d.account! : a)));
+      .then((d: { accounts?: Account[] } | null) => {
+        if (d?.accounts) setAccounts(d.accounts);
       })
       .catch(() => {});
   };
 
   useEffect(() => {
-    const eq = readLocal("tos_equity", "");
+    // O capital vem das contas no servidor (efeito acima), não do browser.
+    const eq = "";
     fetch("/api/accounts")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { accounts?: Account[]; eurusd?: number | null } | null) => {
         if (!d?.accounts) return;
         setEurusd(d.eurusd ?? null);
-        // Migração: o capital que estava só no browser passa para a conta XTB no servidor.
-        const xtb = d.accounts.find((a) => a.broker === "XTB");
-        if (xtb && !(xtb.equity > 0) && Number(eq) > 0) {
-          fetch("/api/accounts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ broker: "XTB", equity: Number(eq) }) }).catch(() => {});
-          xtb.equity = Number(eq);
-        }
         setAccounts(d.accounts);
       })
       .catch(() => {});
@@ -205,7 +200,6 @@ export default function SessaoPage() {
       if (qp.get("tp")) setTp(String(qp.get("tp")));
     }
     const restore = () => {
-      setEquity(eq);
       setUsdPerUnit(fx);
     };
     fetch(sessionUrl(eq, fx))
@@ -364,7 +358,7 @@ export default function SessaoPage() {
       entry_reason: `Mesa de Operação — passos confirmados: ${stepsDone}`,
       shock_timeframe: asset === "XAUUSD" ? "M5" : "M1",
       management: pb.management.join(" "),
-      tags: `sessao,autorizado,${spec.broker}${pb.status === "observacao" ? ",demo" : ""}${fromSignal ? `,signal:${fromSignal.id}` : ""}`,
+      tags: `sessao,autorizado,${(acct?.name ?? spec.broker).replace(/[\s,]+/g, "-")}${pb.status === "observacao" ? ",demo" : ""}${fromSignal ? `,signal:${fromSignal.id}` : ""}`,
       mental_state: grade,
       sleep_quality: sleepQ,
       fatigue_level: sleepQ <= 6 ? 7 : 3,
@@ -715,7 +709,7 @@ export default function SessaoPage() {
                 <input type="number" step="any" value={tp} onChange={(e) => setTp(e.target.value)} style={{ width: "100%" }} />
               </div>
               <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL DA CONTA ({spec.broker}{acct ? ` · ${acct.currency}` : ""})</div>
+                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL DA CONTA ({acct ? `${acct.name} · ${KIND_LABEL[acct.kind]} · ${acct.currency}` : "sem conta"})</div>
                 <input type="number" step="1" value={equity} placeholder="ex.: 142" onChange={(e) => {
                   setEquity(e.target.value);
                 }} onBlur={(e) => { saveEquity(e.target.value); load(false); }} style={{ width: "100%" }} />
@@ -739,6 +733,7 @@ export default function SessaoPage() {
                 </button>
               </div>
             </div>
+            <AccountsPanel accounts={accounts} asset={asset} onChange={setAccounts} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
               <div style={{ background: C.elevated, borderRadius: 6, padding: 10, border: `1px solid ${rrOk ? C.green + "44" : C.border}` }}>
                 <div style={{ fontSize: 9, color: C.muted }}>R:R</div>

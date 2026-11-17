@@ -1,8 +1,8 @@
 /**
- * Contas por corretora guardadas no servidor (SQLite) e câmbio EUR/USD automático.
+ * Contas (prop firm ou corretora) guardadas no servidor (SQLite) e câmbio EUR/USD automático.
  */
 import { db, getSetting, setSetting } from "@/lib/db";
-import { brokerForSymbol, nextPeak, usdPerAccountUnit, type Account, type AccountCurrency, type Broker } from "@/lib/accounts";
+import { accountForSymbolIn, isAccountKind, nextPeak, parseSymbols, usdPerAccountUnit, type Account, type AccountCurrency, type AccountKind } from "@/lib/accounts";
 
 const FX_TTL_MS = 60 * 60_000;
 
@@ -30,32 +30,79 @@ export async function getEurUsd(): Promise<number | null> {
   return cached > 0 ? cached : null;
 }
 
+type Row = Omit<Account, "symbols"> & { symbols: string };
+
 export async function listAccounts(): Promise<Account[]> {
-  const r = await db.execute("SELECT broker, currency, equity, peak_equity, updated_at FROM accounts ORDER BY broker DESC");
-  return (r.rows as unknown as Account[]).map((a) => ({
-    ...a,
+  const r = await db.execute(
+    "SELECT name, kind, currency, symbols, equity, peak_equity, updated_at FROM trade_accounts ORDER BY kind DESC, name"
+  );
+  return (r.rows as unknown as Row[]).map((a) => ({
+    name: String(a.name),
+    kind: isAccountKind(a.kind) ? a.kind : "broker",
+    currency: a.currency === "EUR" ? "EUR" : "USD",
+    symbols: parseSymbols(a.symbols),
     equity: Number(a.equity) || 0,
     peak_equity: Number(a.peak_equity) || 0,
+    updated_at: a.updated_at,
   }));
 }
 
-export async function updateAccount(broker: Broker, patch: { equity?: number; currency?: AccountCurrency }): Promise<Account | null> {
-  const cur = (await listAccounts()).find((a) => a.broker === broker);
-  if (!cur) return null;
-  const equity = patch.equity != null && Number.isFinite(patch.equity) && patch.equity >= 0 ? patch.equity : cur.equity;
-  const currency = patch.currency === "EUR" || patch.currency === "USD" ? patch.currency : cur.currency;
-  const peak = nextPeak(cur.peak_equity, equity);
-  await db.execute({
-    sql: "UPDATE accounts SET equity=?, currency=?, peak_equity=?, updated_at=datetime('now') WHERE broker=?",
-    args: [equity, currency, peak, broker],
-  });
-  return { ...cur, equity, currency, peak_equity: peak };
+export interface AccountPatch {
+  equity?: number;
+  currency?: AccountCurrency;
+  kind?: AccountKind;
+  symbols?: string[];
+  /** Novo nome (renomear). */
+  rename?: string;
 }
 
-/** Conta + câmbio para o activo (ouro → XTB, SOL → Kraken). */
+/** Cada activo pertence a uma só conta: tira-o das outras. */
+async function releaseSymbols(symbols: string[], except: string): Promise<void> {
+  if (!symbols.length) return;
+  for (const a of await listAccounts()) {
+    if (a.name === except) continue;
+    const left = a.symbols.filter((s) => !symbols.includes(s));
+    if (left.length !== a.symbols.length) {
+      await db.execute({ sql: "UPDATE trade_accounts SET symbols=? WHERE name=?", args: [left.join(","), a.name] });
+    }
+  }
+}
+
+/** Cria a conta se não existir; senão actualiza. O pico de capital nunca desce. */
+export async function upsertAccount(name: string, patch: AccountPatch): Promise<Account | null> {
+  const nm = name.trim();
+  if (!nm) return null;
+  const cur = (await listAccounts()).find((a) => a.name === nm);
+  const newName = patch.rename?.trim() || nm;
+  if (newName !== nm && (await listAccounts()).some((a) => a.name === newName)) return null;
+  const equity = patch.equity != null && Number.isFinite(patch.equity) && patch.equity >= 0 ? patch.equity : cur?.equity ?? 0;
+  const currency = patch.currency === "EUR" || patch.currency === "USD" ? patch.currency : cur?.currency ?? "USD";
+  const kind = isAccountKind(patch.kind) ? patch.kind : cur?.kind ?? "broker";
+  const symbols = patch.symbols ? parseSymbols(patch.symbols) : cur?.symbols ?? [];
+  const peak = nextPeak(cur?.peak_equity, equity);
+  if (cur) {
+    await db.execute({
+      sql: "UPDATE trade_accounts SET name=?, kind=?, currency=?, symbols=?, equity=?, peak_equity=?, updated_at=datetime('now') WHERE name=?",
+      args: [newName, kind, currency, symbols.join(","), equity, peak, nm],
+    });
+  } else {
+    await db.execute({
+      sql: "INSERT INTO trade_accounts (name, kind, currency, symbols, equity, peak_equity) VALUES (?,?,?,?,?,?)",
+      args: [newName, kind, currency, symbols.join(","), equity, peak],
+    });
+  }
+  if (patch.symbols) await releaseSymbols(symbols, newName);
+  return { name: newName, kind, currency, symbols, equity, peak_equity: peak };
+}
+
+export async function deleteAccount(name: string): Promise<boolean> {
+  const r = await db.execute({ sql: "DELETE FROM trade_accounts WHERE name=?", args: [name] });
+  return r.rowsAffected > 0;
+}
+
+/** Conta a que o activo está atribuído + câmbio para o cálculo do lote. */
 export async function accountForSymbol(symbol: string): Promise<{ equity: number | null; usdPerAccountUnit: number; account: Account | null }> {
-  const broker = brokerForSymbol(symbol);
-  const acct = broker ? (await listAccounts()).find((a) => a.broker === broker) ?? null : null;
+  const acct = accountForSymbolIn(await listAccounts(), symbol);
   const eurusd = acct?.currency === "EUR" ? await getEurUsd() : null;
   return {
     equity: acct && acct.equity > 0 ? acct.equity : null,

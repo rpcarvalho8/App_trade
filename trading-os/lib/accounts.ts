@@ -1,13 +1,18 @@
 /**
- * Contas por corretora e custos por trade (funções puras, usáveis no cliente e no servidor).
+ * Contas (prop firm ou corretora) e custos por trade (funções puras, usáveis no cliente e no servidor).
  */
 
-export type Broker = "XTB" | "Kraken";
+export type AccountKind = "prop" | "broker";
 export type AccountCurrency = "EUR" | "USD";
 
+/** Conta onde operas: prop firm (ex.: FundingPips) ou corretora (ex.: Kraken). */
 export interface Account {
-  broker: Broker;
+  /** Nome único da conta, ex.: "FundingPips" ou "Kraken". */
+  name: string;
+  kind: AccountKind;
   currency: AccountCurrency;
+  /** Activos operados nesta conta (cada activo pertence a uma só conta). */
+  symbols: string[];
   /** Capital actual, na moeda da conta. */
   equity: number;
   /** Maior capital já registado (base do drawdown total da Fase 3). */
@@ -15,21 +20,30 @@ export interface Account {
   updated_at?: string;
 }
 
-/** Corretora onde cada activo é operado. */
-export const BROKER_FOR_SYMBOL: Record<string, Broker> = {
-  XAUUSD: "XTB",
-  SOLUSD: "Kraken",
-};
+export const KIND_LABEL: Record<AccountKind, string> = { prop: "Prop firm", broker: "Corretora" };
 
-export const DEFAULT_ACCOUNTS: Array<Pick<Account, "broker" | "currency">> = [
-  { broker: "XTB", currency: "EUR" },
-  { broker: "Kraken", currency: "USD" },
+/** Contas iniciais: ouro no desafio FundingPips, SOL na Kraken. */
+export const DEFAULT_ACCOUNTS: Array<Pick<Account, "name" | "kind" | "currency" | "symbols">> = [
+  { name: "FundingPips", kind: "prop", currency: "USD", symbols: ["XAUUSD"] },
+  { name: "Kraken", kind: "broker", currency: "USD", symbols: ["SOLUSD"] },
 ];
 
 const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 
-export function brokerForSymbol(symbol: string): Broker | null {
-  return BROKER_FOR_SYMBOL[String(symbol || "").toUpperCase()] ?? null;
+/** "XAUUSD, solusd" → ["XAUUSD","SOLUSD"] (também aceita array). */
+export function parseSymbols(v: unknown): string[] {
+  const list = Array.isArray(v) ? v : String(v ?? "").split(/[,\s]+/);
+  return [...new Set(list.map((x) => String(x).trim().toUpperCase()).filter(Boolean))];
+}
+
+export function isAccountKind(v: unknown): v is AccountKind {
+  return v === "prop" || v === "broker";
+}
+
+/** Conta a que o activo está atribuído. */
+export function accountForSymbolIn<T extends Pick<Account, "symbols">>(accounts: T[], symbol: string): T | null {
+  const s = String(symbol || "").toUpperCase();
+  return accounts.find((a) => a.symbols.includes(s)) ?? null;
 }
 
 /** USD por 1 unidade da moeda da conta (o que o positionSize espera). */
@@ -101,8 +115,8 @@ export function costInR(t: CostFields): number | null {
   return known ? total : null;
 }
 
-export interface BrokerCostSummary {
-  broker: string;
+export interface AccountCostSummary {
+  account: string;
   trades: number;
   fees: number;
   avgCostR: number | null;
@@ -110,12 +124,15 @@ export interface BrokerCostSummary {
   grossPnl: number;
 }
 
-/** Custos agregados por corretora (a partir do par da trade). */
-export function costsByBroker(rows: Array<CostFields & { pair?: unknown }>): BrokerCostSummary[] {
+/** Custos agregados por conta (a partir do par da trade e da atribuição activo → conta). */
+export function costsByAccount(
+  rows: Array<CostFields & { pair?: unknown }>,
+  accounts: Array<Pick<Account, "name" | "symbols">>
+): AccountCostSummary[] {
   const map = new Map<string, { trades: number; fees: number; rSum: number; rN: number; net: number; gross: number }>();
   for (const t of rows) {
-    const broker = brokerForSymbol(String(t.pair ?? "")) ?? "Outra";
-    const cur = map.get(broker) ?? { trades: 0, fees: 0, rSum: 0, rN: 0, net: 0, gross: 0 };
+    const key = accountForSymbolIn(accounts, String(t.pair ?? ""))?.name ?? "Outra";
+    const cur = map.get(key) ?? { trades: 0, fees: 0, rSum: 0, rN: 0, net: 0, gross: 0 };
     cur.trades++;
     cur.fees += tradeFees(t);
     cur.gross += num(t.pnl);
@@ -125,10 +142,10 @@ export function costsByBroker(rows: Array<CostFields & { pair?: unknown }>): Bro
       cur.rSum += c;
       cur.rN++;
     }
-    map.set(broker, cur);
+    map.set(key, cur);
   }
-  return [...map.entries()].map(([broker, v]) => ({
-    broker,
+  return [...map.entries()].map(([account, v]) => ({
+    account,
     trades: v.trades,
     fees: v.fees,
     avgCostR: v.rN ? v.rSum / v.rN : null,

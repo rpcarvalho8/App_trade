@@ -14,7 +14,7 @@ export default function DayRiskBar() {
   const [hasEquity, setHasEquity] = useState(true);
 
   useEffect(() => {
-    // O capital vem das contas guardadas no servidor (XTB + Kraken), não do browser.
+    // O capital vem das contas guardadas no servidor (prop firms e corretoras), não do browser.
     const load = () => {
       fetch("/api/session")
         .then((r) => (r.ok ? r.json() : null))

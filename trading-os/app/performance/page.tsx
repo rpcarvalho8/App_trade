@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { computeMetrics, equityCurve, isClosedOutcome } from "@/lib/metrics";
-import { costsByBroker, netPnl, toEur, tradeFees } from "@/lib/accounts";
+import { costsByAccount, KIND_LABEL, netPnl, toEur, tradeFees, type Account } from "@/lib/accounts";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, ReferenceLine, ScatterChart, Scatter } from "recharts";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
@@ -19,12 +19,14 @@ export default function PerformancePage() {
   const [trades, setTrades] = useState<any[]>([]);
   const [err, setErr] = useState("");
   const [equityNow, setEquityNow] = useState(0);
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   useEffect(()=>{
-    // Capital actual = soma das contas no servidor (XTB + Kraken), em EUR.
+    // Capital actual = soma das contas no servidor (prop firms + corretoras), em EUR.
     fetch("/api/accounts").then(r=>r.json()).then((d: any)=>{
       const total=(d?.accounts||[]).reduce((a: number,x: any)=>a+toEur(Number(x.equity)||0,x.currency,d?.eurusd??null),0);
       setEquityNow(total);
+      setAccounts(d?.accounts||[]);
     }).catch(()=>{});
     Promise.all([
       fetch("/api/stats").then(r=>r.json()),
@@ -47,7 +49,7 @@ export default function PerformancePage() {
   const pfLabel = fmtPf(pf);
   const totalFees = closedTrades.reduce((a,t)=>a+tradeFees(t),0);
   const totalNet = netTrades.reduce((a,t)=>a+Number(t.pnl||0),0);
-  const brokerCosts = costsByBroker(closedTrades);
+  const accountCosts = costsByAccount(closedTrades, accounts);
 
   // Curva de capital por dia: capital inicial = capital actual − P&L total fechado.
   const dailyMap = new Map<string,number>();
@@ -99,22 +101,22 @@ export default function PerformancePage() {
         <Stat label="SEQUÊNCIAS" value={`${mxW} / ${mxL}`} color={C.secondary} sub="máx. ganhos / perdas seguidas"/>
       </div>
 
-      {brokerCosts.length>0 && (
+      {accountCosts.length>0 && (
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
-          <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>CUSTOS POR CORRETORA</div>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>CUSTOS POR CONTA</div>
           <table>
-            <thead><tr><th>CORRETORA</th><th>TRADES</th><th>P&L BRUTO</th><th>CUSTOS</th><th>P&L LÍQUIDO</th><th title="spread / distância do SL + taxas / risco">CUSTO MÉDIO</th></tr></thead>
+            <thead><tr><th>CONTA</th><th>TRADES</th><th>P&L BRUTO</th><th>CUSTOS</th><th>P&L LÍQUIDO</th><th title="spread / distância do SL + taxas / risco">CUSTO MÉDIO</th></tr></thead>
             <tbody>
-              {brokerCosts.map(b=>(
-                <tr key={b.broker}>
-                  <td style={{color:"#e2e8f0",fontWeight:500}}>{b.broker}</td>
+              {accountCosts.map(b=>{ const kind=accounts.find(a=>a.name===b.account)?.kind; return (
+                <tr key={b.account}>
+                  <td style={{color:"#e2e8f0",fontWeight:500}}>{b.account}{kind&&<span style={{color:C.muted,fontSize:9,marginLeft:6}}>{KIND_LABEL[kind]}</span>}</td>
                   <td>{b.trades}</td>
                   <td style={{color:b.grossPnl>=0?C.green:C.red}}>${b.grossPnl.toFixed(0)}</td>
                   <td style={{color:C.amber}}>${b.fees.toFixed(2)}</td>
                   <td style={{color:b.netPnl>=0?C.green:C.red,fontWeight:600}}>${b.netPnl.toFixed(0)}</td>
                   <td style={{color:b.avgCostR==null?C.muted:b.avgCostR>0.15?C.red:b.avgCostR>0.08?C.amber:C.green}}>{b.avgCostR==null?"—":`${b.avgCostR.toFixed(3)}R`}</td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
           <div style={{fontSize:9,color:C.muted,marginTop:8}}>Custo em R = spread ÷ distância do SL + (comissão + swap/funding) ÷ risco. Acima de 0,15R por trade come boa parte da vantagem.</div>

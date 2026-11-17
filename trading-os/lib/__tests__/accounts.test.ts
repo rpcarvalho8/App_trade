@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { brokerForSymbol, costInR, costsByBroker, netPnl, nextPeak, toEur, tradeFees, usdPerAccountUnit } from "@/lib/accounts";
+import { accountForSymbolIn, costInR, costsByAccount, DEFAULT_ACCOUNTS, netPnl, nextPeak, parseSymbols, toEur, tradeFees, usdPerAccountUnit } from "@/lib/accounts";
 
 describe("contas", () => {
-  it("corretora por activo", () => {
-    expect(brokerForSymbol("XAUUSD")).toBe("XTB");
-    expect(brokerForSymbol("solusd")).toBe("Kraken");
-    expect(brokerForSymbol("EURUSD")).toBeNull();
+  it("conta por activo: ouro na prop firm, SOL na Kraken", () => {
+    expect(accountForSymbolIn(DEFAULT_ACCOUNTS, "XAUUSD")?.name).toBe("FundingPips");
+    expect(accountForSymbolIn(DEFAULT_ACCOUNTS, "XAUUSD")?.kind).toBe("prop");
+    expect(accountForSymbolIn(DEFAULT_ACCOUNTS, "solusd")?.name).toBe("Kraken");
+    expect(accountForSymbolIn(DEFAULT_ACCOUNTS, "EURUSD")).toBeNull();
+  });
+
+  it("lê a lista de activos", () => {
+    expect(parseSymbols("xauusd, SOLUSD xauusd")).toEqual(["XAUUSD", "SOLUSD"]);
+    expect(parseSymbols(["solusd"])).toEqual(["SOLUSD"]);
+    expect(parseSymbols("")).toEqual([]);
   });
 
   it("USD por unidade da conta", () => {
@@ -40,19 +47,19 @@ describe("custos", () => {
     expect(costInR({ entry: 100, stop_loss: 98 })).toBeNull();
   });
 
-  it("agrega por corretora", () => {
-    const out = costsByBroker([
+  it("agrega por conta", () => {
+    const out = costsByAccount([
       { pair: "XAUUSD", pnl: 10, commission: 1 },
       { pair: "XAUUSD", pnl: -5, commission: 1 },
       { pair: "SOLUSD", pnl: 4, swap_funding: 0.5 },
       { pair: "EURUSD", pnl: 1 },
-    ]);
-    const xtb = out.find((b) => b.broker === "XTB")!;
-    expect(xtb.trades).toBe(2);
-    expect(xtb.fees).toBe(2);
-    expect(xtb.netPnl).toBe(3);
-    expect(xtb.grossPnl).toBe(5);
-    expect(out.find((b) => b.broker === "Kraken")!.netPnl).toBe(3.5);
-    expect(out.find((b) => b.broker === "Outra")!.trades).toBe(1);
+    ], DEFAULT_ACCOUNTS);
+    const fp = out.find((b) => b.account === "FundingPips")!;
+    expect(fp.trades).toBe(2);
+    expect(fp.fees).toBe(2);
+    expect(fp.netPnl).toBe(3);
+    expect(fp.grossPnl).toBe(5);
+    expect(out.find((b) => b.account === "Kraken")!.netPnl).toBe(3.5);
+    expect(out.find((b) => b.account === "Outra")!.trades).toBe(1);
   });
 });
