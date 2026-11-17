@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { computeMetrics, equityCurve, isClosedOutcome } from "@/lib/metrics";
+import { costsByBroker, netPnl, toEur, tradeFees } from "@/lib/accounts";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid, ReferenceLine, ScatterChart, Scatter } from "recharts";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
@@ -20,7 +21,11 @@ export default function PerformancePage() {
   const [equityNow, setEquityNow] = useState(0);
 
   useEffect(()=>{
-    try { setEquityNow(Number(window.localStorage.getItem("tos_equity")) || 0); } catch { /* sem storage */ }
+    // Capital actual = soma das contas no servidor (XTB + Kraken), em EUR.
+    fetch("/api/accounts").then(r=>r.json()).then((d: any)=>{
+      const total=(d?.accounts||[]).reduce((a: number,x: any)=>a+toEur(Number(x.equity)||0,x.currency,d?.eurusd??null),0);
+      setEquityNow(total);
+    }).catch(()=>{});
     Promise.all([
       fetch("/api/stats").then(r=>r.json()),
       fetch("/api/trades?limit=5000").then(r=>r.json()),
@@ -33,12 +38,21 @@ export default function PerformancePage() {
   const s = stats.summary||{};
   // Só trades fechadas (exclui RUNNING e sinais PENDING por validar).
   const closedTrades = trades.filter(t=>isClosedOutcome(t.outcome));
-  const m = computeMetrics(closedTrades);
+  // Métricas líquidas (P&L − comissão − swap/funding); o PF bruto fica ao lado para comparar.
+  const netTrades = closedTrades.map(t=>({...t,pnl:netPnl(t)}));
+  const m = computeMetrics(netTrades);
+  const mGross = computeMetrics(closedTrades);
   const pf = m.profitFactor;
-  const pfLabel = pf==null?"—":pf===Infinity?"∞":pf.toFixed(2);
+  const fmtPf = (x: number|null)=>x==null?"—":x===Infinity?"∞":x.toFixed(2);
+  const pfLabel = fmtPf(pf);
+  const totalFees = closedTrades.reduce((a,t)=>a+tradeFees(t),0);
+  const totalNet = netTrades.reduce((a,t)=>a+Number(t.pnl||0),0);
+  const brokerCosts = costsByBroker(closedTrades);
 
   // Curva de capital por dia: capital inicial = capital actual − P&L total fechado.
-  const daily = stats.daily||[];
+  const dailyMap = new Map<string,number>();
+  for (const t of netTrades) dailyMap.set(String(t.date||""),(dailyMap.get(String(t.date||""))||0)+Number(t.pnl||0));
+  const daily = [...dailyMap.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([date,pnl])=>({date,pnl}));
   const totalPnl = daily.reduce((a: number,d: any)=>a+Number(d.pnl||0),0);
   const startEquity = equityNow>0 ? equityNow - totalPnl : 0;
   const curve = equityCurve(daily.map((d: any)=>({label:String(d.date||"").slice(5),pnl:Number(d.pnl||0)})), startEquity);
@@ -75,15 +89,37 @@ export default function PerformancePage() {
         </div>
       )}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-        <Stat label="NET P&L" value={`$${Number(s.total_pnl||0).toFixed(0)}`} color={Number(s.total_pnl||0)>=0?C.green:C.red}/>
+        <Stat label="P&L LÍQUIDO" value={`$${totalNet.toFixed(0)}`} color={totalNet>=0?C.green:C.red} sub={`bruto $${Number(s.total_pnl||0).toFixed(0)} · custos $${totalFees.toFixed(0)}`}/>
         <Stat label="WIN RATE" value={m.winRate==null?"—":`${m.winRate.toFixed(1)}%`} color={C.accent} sub={`${m.wins}W ${m.losses}L`}/>
-        <Stat label="PROFIT FACTOR" value={pfLabel} color={pf==null?C.muted:pf>=1.5?C.green:pf>=1?C.amber:C.red} sub="Σ ganhos / Σ perdas"/>
+        <Stat label="PROFIT FACTOR" value={pfLabel} color={pf==null?C.muted:pf>=1.5?C.green:pf>=1?C.amber:C.red} sub={`líquido · bruto ${fmtPf(mGross.profitFactor)}`}/>
         <Stat label="PAYOFF" value={m.payoff==null?"—":m.payoff.toFixed(2)} color={C.secondary} sub="ganho médio / perda média"/>
         <Stat label="EXPECTÂNCIA" value={m.expectancyR==null?"—":`${m.expectancyR>=0?"+":""}${m.expectancyR.toFixed(2)}R`} color={m.expectancyR==null?C.muted:m.expectancyR>0?C.green:C.red} sub={m.expectancyMoney==null?undefined:`$${m.expectancyMoney.toFixed(1)} por trade`}/>
         <Stat label="DRAWDOWN MÁX." value={ddLabel} color={C.red} sub={startEquity>0?"sobre o capital":"define o capital na Mesa para ver em %"}/>
         <Stat label="GANHO / PERDA MÉDIA" value={`$${(m.avgWin??0).toFixed(0)} / $${(m.avgLoss??0).toFixed(0)}`} color={C.secondary}/>
         <Stat label="SEQUÊNCIAS" value={`${mxW} / ${mxL}`} color={C.secondary} sub="máx. ganhos / perdas seguidas"/>
       </div>
+
+      {brokerCosts.length>0 && (
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>CUSTOS POR CORRETORA</div>
+          <table>
+            <thead><tr><th>CORRETORA</th><th>TRADES</th><th>P&L BRUTO</th><th>CUSTOS</th><th>P&L LÍQUIDO</th><th title="spread / distância do SL + taxas / risco">CUSTO MÉDIO</th></tr></thead>
+            <tbody>
+              {brokerCosts.map(b=>(
+                <tr key={b.broker}>
+                  <td style={{color:"#e2e8f0",fontWeight:500}}>{b.broker}</td>
+                  <td>{b.trades}</td>
+                  <td style={{color:b.grossPnl>=0?C.green:C.red}}>${b.grossPnl.toFixed(0)}</td>
+                  <td style={{color:C.amber}}>${b.fees.toFixed(2)}</td>
+                  <td style={{color:b.netPnl>=0?C.green:C.red,fontWeight:600}}>${b.netPnl.toFixed(0)}</td>
+                  <td style={{color:b.avgCostR==null?C.muted:b.avgCostR>0.15?C.red:b.avgCostR>0.08?C.amber:C.green}}>{b.avgCostR==null?"—":`${b.avgCostR.toFixed(3)}R`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{fontSize:9,color:C.muted,marginTop:8}}>Custo em R = spread ÷ distância do SL + (comissão + swap/funding) ÷ risco. Acima de 0,15R por trade come boa parte da vantagem.</div>
+        </div>
+      )}
 
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16}}>
         <div style={{fontSize:9,color:C.muted,letterSpacing:2,marginBottom:12}}>{startEquity>0?"CURVA DE CAPITAL":"CURVA DE EQUITY — P&L ACUMULADO"}</div>

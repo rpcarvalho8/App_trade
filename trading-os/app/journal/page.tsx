@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { JOURNAL_PAIRS, canonicalizePair, isSessionPair } from "@/lib/pairs";
 import { validateTrade } from "@/lib/risk";
+import { netPnl, tradeFees } from "@/lib/accounts";
 
 const C = { accent:"#4af0c4",green:"#4ade80",red:"#f87171",amber:"#fbbf24",blue:"#60a5fa",purple:"#c084fc",muted:"#475569",secondary:"#94a3b8",border:"#1e2d45",card:"#0d1929",elevated:"#111827" };
 
@@ -298,6 +299,7 @@ const blank = () => ({
   date:new Date().toISOString().slice(0,10), pair:"XAUUSD", direction:"LONG", setup:"", session:"London",
   entry:"", exit_price:"", stop_loss:"", take_profit:"",
   risk_percent:"1", pnl:"", rr_planned:"", rr_real:"", outcome:"WIN",
+  commission:"", swap_funding:"", spread_pts:"",
   elliott_wave:"", wyckoff_phase:"", wyckoff_event:"", imbalance_zone:"", htf_bias:"",
   confluences:"", entry_reason:"", shock_type:"", shock_timeframe:"",
   management:"", lesson:"", notes:"",
@@ -448,6 +450,7 @@ function JournalInner() {
       entry:t.entry||"", exit_price:t.exit_price||"", stop_loss:t.stop_loss||"",
       take_profit:t.take_profit||"", risk_percent:t.risk_percent||"1",
       pnl:t.pnl||"", rr_planned:t.rr_planned||"", rr_real:t.rr_real||"",
+      commission:t.commission??"", swap_funding:t.swap_funding??"", spread_pts:t.spread_pts??"",
       // Validar um sinal pendente = ordem posta: passa a "Em curso".
       outcome:t.outcome==="PENDING"?"RUNNING":(t.outcome||"WIN"),
       elliott_wave:t.elliott_wave||"", wyckoff_phase:t.wyckoff_phase||"",
@@ -488,6 +491,9 @@ function JournalInner() {
       take_profit:form.take_profit?Number(form.take_profit):null,
       risk_percent:Number(form.risk_percent)||1,
       pnl:form.pnl!==""?Number(form.pnl):null,
+      commission:form.commission!==""&&form.commission!=null?Number(form.commission):null,
+      swap_funding:form.swap_funding!==""&&form.swap_funding!=null?Number(form.swap_funding):null,
+      spread_pts:form.spread_pts!==""&&form.spread_pts!=null?Number(form.spread_pts):null,
       rr_planned:form.rr_planned?Number(form.rr_planned):null,
       rr_real:form.rr_real?Number(form.rr_real):null,
       followed_plan:form.followed_plan===""?null:Number(form.followed_plan),
@@ -653,6 +659,17 @@ function JournalInner() {
                   <F label="Saída Real"><input type="number" step="any" value={form.exit_price} onChange={set("exit_price")} placeholder="1.0891" style={{width:"100%"}}/></F>
                   <F label="Risco (%)"><input type="number" step="0.1" value={form.risk_percent} onChange={set("risk_percent")} style={{width:"100%"}}/></F>
                   <F label="P&L ($)"><input type="number" step="any" value={form.pnl} onChange={set("pnl")} style={{width:"100%"}}/></F>
+                </div>
+
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12 }}>
+                  <F label="Comissão"><input type="number" step="any" value={form.commission} onChange={set("commission")} placeholder="0" style={{width:"100%"}}/></F>
+                  <F label="Swap / Funding"><input type="number" step="any" value={form.swap_funding} onChange={set("swap_funding")} placeholder="+ pago / − recebido" style={{width:"100%"}}/></F>
+                  <F label="Spread (pts)"><input type="number" step="any" value={form.spread_pts} onChange={set("spread_pts")} placeholder="0.3" style={{width:"100%"}}/></F>
+                  <F label="P&L líquido">
+                    <div style={{ padding:"8px 0",fontWeight:600,color:netPnl(form)>=0?C.green:C.red }}>
+                      {form.pnl===""?"—":`${netPnl(form)>=0?"+":""}${netPnl(form).toFixed(2)}`}
+                    </div>
+                  </F>
                 </div>
 
                 <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12 }}>
@@ -887,7 +904,7 @@ function JournalInner() {
               <tr>
                 <th>DATA</th><th>PAR</th><th>DIR</th><th>SETUP</th>
                 <th>ENTRADA</th><th>SL</th><th>TP</th><th>SAÍDA</th>
-                <th>R:R</th><th>P&L</th><th>RESULTADO</th>
+                <th>R:R</th><th title="P&L líquido (após comissão e swap/funding)">P&L LÍQ.</th><th>RESULTADO</th>
                 <th>MENTAL</th><th>😴</th><th>PLANO</th><th style={{width:80}}>AÇÕES</th>
               </tr>
             </thead>
@@ -906,7 +923,7 @@ function JournalInner() {
                   <td style={{ fontFamily:"monospace",fontSize:11,color:C.green }}>{t.take_profit?Number(t.take_profit).toFixed(4):"—"}</td>
                   <td style={{ fontFamily:"monospace",fontSize:11 }}>{t.exit_price?Number(t.exit_price).toFixed(4):"—"}</td>
                   <td style={{ color:C.amber,fontSize:11 }}>{t.rr_real?`1:${Number(t.rr_real).toFixed(1)}`:"—"}</td>
-                  <td style={{ color:Number(t.pnl)>=0?C.green:C.red,fontWeight:600 }}>{Number(t.pnl)>=0?"+":""}${Number(t.pnl||0).toFixed(0)}</td>
+                  <td style={{ color:netPnl(t)>=0?C.green:C.red,fontWeight:600 }} title={tradeFees(t)?`Bruto ${Number(t.pnl||0).toFixed(2)} · custos ${tradeFees(t).toFixed(2)}`:undefined}>{netPnl(t)>=0?"+":""}${netPnl(t).toFixed(0)}</td>
                   <td>
                     <span style={{ fontSize:9,padding:"2px 6px",borderRadius:10,background:t.outcome==="WIN"?"#14532d":t.outcome==="LOSS"?"#7f1d1d":"#1e293b",color:t.outcome==="WIN"?C.green:t.outcome==="LOSS"?C.red:C.secondary }}>
                       {t.outcome}

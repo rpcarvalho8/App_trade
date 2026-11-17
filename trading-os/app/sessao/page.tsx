@@ -20,6 +20,7 @@ import {
   validateLevels,
   type DailyGuard,
 } from "@/lib/risk";
+import { brokerForSymbol, usdPerAccountUnit, type Account } from "@/lib/accounts";
 
 const C = {
   accent: "#4af0c4",
@@ -102,6 +103,9 @@ export default function SessaoPage() {
   const [equity, setEquity] = useState("");
   /** Quantos USD vale 1 unidade da moeda da conta (1 se a conta for em USD). */
   const [usdPerUnit, setUsdPerUnit] = useState("1");
+  /** Contas por corretora guardadas no servidor (/api/accounts) e EUR/USD automático. */
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [eurusd, setEurusd] = useState<number | null>(null);
   const [sleepHours, setSleepHours] = useState("7");
   const [stress, setStress] = useState("3");
   const [grade, setGrade] = useState("B");
@@ -143,8 +147,47 @@ export default function SessaoPage() {
       });
   };
 
+  // Capital e câmbio da conta da corretora deste activo (ouro → XTB, SOL → Kraken).
+  const broker = brokerForSymbol(asset);
+  const acct = accounts.find((a) => a.broker === broker) ?? null;
+  useEffect(() => {
+    if (!acct) return;
+    setEquity(acct.equity > 0 ? String(acct.equity) : "");
+    setUsdPerUnit(String(Number(usdPerAccountUnit(acct.currency, eurusd).toFixed(4))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset, acct?.equity, acct?.currency, eurusd]);
+
+  const saveEquity = (value: string) => {
+    const n = Number(value);
+    if (!broker || !(n >= 0) || value === "") return;
+    fetch("/api/accounts", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ broker, equity: n }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { account?: Account } | null) => {
+        if (d?.account) setAccounts((list) => list.map((a) => (a.broker === d.account!.broker ? d.account! : a)));
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     const eq = readLocal("tos_equity", "");
+    fetch("/api/accounts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { accounts?: Account[]; eurusd?: number | null } | null) => {
+        if (!d?.accounts) return;
+        setEurusd(d.eurusd ?? null);
+        // Migração: o capital que estava só no browser passa para a conta XTB no servidor.
+        const xtb = d.accounts.find((a) => a.broker === "XTB");
+        if (xtb && !(xtb.equity > 0) && Number(eq) > 0) {
+          fetch("/api/accounts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ broker: "XTB", equity: Number(eq) }) }).catch(() => {});
+          xtb.equity = Number(eq);
+        }
+        setAccounts(d.accounts);
+      })
+      .catch(() => {});
     const fx = readLocal("tos_usd_per_unit", "1");
     // "Carregar na Mesa" (/signals): /sessao?asset=XAUUSD&dir=LONG&entry=…&sl=…&tp=…
     const qp = new URLSearchParams(window.location.search);
@@ -672,14 +715,15 @@ export default function SessaoPage() {
                 <input type="number" step="any" value={tp} onChange={(e) => setTp(e.target.value)} style={{ width: "100%" }} />
               </div>
               <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL DA CONTA ({spec.broker})</div>
+                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>CAPITAL DA CONTA ({spec.broker}{acct ? ` · ${acct.currency}` : ""})</div>
                 <input type="number" step="1" value={equity} placeholder="ex.: 142" onChange={(e) => {
                   setEquity(e.target.value);
-                  writeLocal("tos_equity", e.target.value);
-                }} onBlur={() => load(false)} style={{ width: "100%" }} />
+                }} onBlur={(e) => { saveEquity(e.target.value); load(false); }} style={{ width: "100%" }} />
               </div>
               <div>
-                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>USD POR 1 UNIDADE DA CONTA</div>
+                <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>
+                  USD POR 1 {acct?.currency || "UNIDADE DA CONTA"}{acct?.currency === "EUR" && eurusd ? " · automático (BCE)" : ""}
+                </div>
                 <input type="number" step="0.01" value={usdPerUnit} onChange={(e) => {
                   setUsdPerUnit(e.target.value);
                   writeLocal("tos_usd_per_unit", e.target.value);

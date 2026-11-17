@@ -236,6 +236,11 @@ async function migrateSignalJournal(): Promise<void> {
     ["executable", "INTEGER"],
     ["expires_at", "TEXT"],
     ["invalidation_price", "REAL"],
+    // Fase 2: custos por trade, na moeda da conta (positivo = pago).
+    ["commission", "REAL"],
+    ["swap_funding", "REAL"],
+    // Spread na entrada, em unidades de preço.
+    ["spread_pts", "REAL"],
   ]);
   await addColumns("signals", [
     ["status", "TEXT DEFAULT 'active'"],
@@ -257,6 +262,15 @@ async function migrateSignalJournal(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_signal_events_signal ON signal_events(signal_id);
+    CREATE TABLE IF NOT EXISTS accounts (
+      broker TEXT PRIMARY KEY,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      equity REAL,
+      peak_equity REAL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    INSERT OR IGNORE INTO accounts (broker, currency) VALUES ('XTB', 'EUR');
+    INSERT OR IGNORE INTO accounts (broker, currency) VALUES ('Kraken', 'USD');
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT,
