@@ -308,6 +308,72 @@ const blank = () => ({
   emotional_state:"", pre_session_notes:"", post_trade_emotion:"",
 });
 
+// ─── Sinais pendentes (criados pelo motor) ───────────────────────────────────
+const SIGNAL_STATUS: Record<string,{label:string;color:string}> = {
+  pending: { label:"PENDENTE DE VALIDAÇÃO", color:"#fbbf24" },
+  invalidated: { label:"INVALIDADO — não entrar", color:"#f87171" },
+  expired: { label:"EXPIRADO", color:"#94a3b8" },
+  reversal: { label:"CONTRARIADO por sinal oposto", color:"#f87171" },
+};
+
+function PendingSignals({ rows, highlightId, onValidate, onDiscard }: {
+  rows: any[]; highlightId: number|null; onValidate: (t:any)=>void; onDiscard: (id:number)=>void;
+}) {
+  const refs = useRef<Record<number, HTMLDivElement|null>>({});
+  useEffect(()=>{
+    if (highlightId && refs.current[highlightId]) refs.current[highlightId]?.scrollIntoView({behavior:"smooth",block:"center"});
+  },[highlightId,rows.length]);
+  const fmt = (v:any, pair:string) => v==null||v===""?"—":Number(v).toFixed(pair==="XAUUSD"?2:4);
+  return (
+    <div style={{ background:"#1a1508",border:"1px solid #fbbf2455",borderRadius:10,padding:14 }}>
+      <div style={{ fontSize:10,color:C.amber,letterSpacing:1.5,marginBottom:10,fontWeight:600 }}>
+        SINAIS DO MOTOR POR VALIDAR ({rows.length}) — confirma os números antes de pôr a ordem na XTB / Kraken
+      </div>
+      <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+        {rows.map(t=>{
+          const st = SIGNAL_STATUS[t.signal_status||"pending"]||SIGNAL_STATUS.pending;
+          const live = !t.signal_status || t.signal_status==="pending";
+          const expired = live && t.expires_at && Date.parse(t.expires_at) < Date.now();
+          const hl = highlightId===t.id;
+          return (
+            <div key={t.id} ref={el=>{refs.current[t.id]=el;}}
+              style={{ background:C.card,border:`1px solid ${hl?C.accent:C.border}`,boxShadow:hl?`0 0 0 2px ${C.accent}44`:"none",borderRadius:8,padding:"10px 12px",opacity:live&&!expired?1:0.6 }}>
+              <div style={{ display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginBottom:6 }}>
+                <span style={{ fontWeight:700,color:t.direction==="LONG"?C.green:C.red }}>{t.pair} {t.direction}</span>
+                <span style={{ fontSize:11,color:C.secondary }}>{t.setup}</span>
+                <span style={{ fontSize:9,padding:"2px 8px",borderRadius:10,border:`1px solid ${st.color}66`,color:st.color }}>{expired?"EXPIRADO":st.label}</span>
+                {t.executable===0 && <span style={{ fontSize:9,padding:"2px 8px",borderRadius:10,background:"#3b1a1a",color:C.red }}>NÃO EXECUTÁVEL — stop acima do máximo</span>}
+                <span style={{ marginLeft:"auto",fontSize:10,color:C.muted }}>#{t.id} · {t.date}</span>
+              </div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:"4px 18px",fontSize:11,fontFamily:"monospace" }}>
+                <span><span style={{color:C.muted}}>PE </span>{fmt(t.entry,t.pair)}</span>
+                <span style={{color:C.red}}><span style={{color:C.muted}}>SL </span>{fmt(t.stop_loss,t.pair)}</span>
+                <span style={{color:C.green}}><span style={{color:C.muted}}>TP1 (1R) </span>{fmt(t.tp1,t.pair)}</span>
+                <span style={{color:C.green}}><span style={{color:C.muted}}>TP2 </span>{fmt(t.take_profit,t.pair)}</span>
+                <span style={{color:C.amber}}><span style={{color:C.muted}}>R:R </span>{t.rr_planned?Number(t.rr_planned).toFixed(2):"—"}</span>
+                <span><span style={{color:C.muted}}>Lote </span>{t.lot_suggested==null?"capital?":t.lot_suggested}</span>
+                <span><span style={{color:C.muted}}>Stop máx. </span>{fmt(t.max_stop,t.pair)}</span>
+                <span><span style={{color:C.muted}}>Invalida em </span>{fmt(t.invalidation_price,t.pair)}</span>
+                <span><span style={{color:C.muted}}>Válido até </span>{t.expires_at?new Date(t.expires_at).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit"}):"—"}</span>
+              </div>
+              <div style={{ display:"flex",gap:8,marginTop:8 }}>
+                {live && !expired && t.executable!==0 && (
+                  <button onClick={()=>onValidate(t)} style={{ background:"#0f4c3a",color:C.accent,border:`1px solid ${C.accent}`,padding:"5px 12px",borderRadius:4,fontSize:11,cursor:"pointer" }}>
+                    ✓ Validar e completar (ordem posta)
+                  </button>
+                )}
+                <button onClick={()=>onDiscard(t.id)} style={{ background:"transparent",color:C.muted,border:`1px solid ${C.border}`,padding:"5px 12px",borderRadius:4,fontSize:11,cursor:"pointer" }}>
+                  Descartar
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function JournalPage() {
   return (
@@ -334,7 +400,7 @@ function JournalInner() {
 
   const load = () => {
     Promise.all([
-      fetch("/api/trades?limit=200").then(r=>{ if(!r.ok) throw new Error("trades "+r.status); return r.json(); }),
+      fetch("/api/trades?limit=200&include_pending=1").then(r=>{ if(!r.ok) throw new Error("trades "+r.status); return r.json(); }),
       fetch("/api/setups").then(r=>{ if(!r.ok) throw new Error("setups "+r.status); return r.json(); }),
     ]).then(([t,s])=>{
       setTrades(t);
@@ -382,7 +448,8 @@ function JournalInner() {
       entry:t.entry||"", exit_price:t.exit_price||"", stop_loss:t.stop_loss||"",
       take_profit:t.take_profit||"", risk_percent:t.risk_percent||"1",
       pnl:t.pnl||"", rr_planned:t.rr_planned||"", rr_real:t.rr_real||"",
-      outcome:t.outcome||"WIN",
+      // Validar um sinal pendente = ordem posta: passa a "Em curso".
+      outcome:t.outcome==="PENDING"?"RUNNING":(t.outcome||"WIN"),
       elliott_wave:t.elliott_wave||"", wyckoff_phase:t.wyckoff_phase||"",
       wyckoff_event:t.wyckoff_event||"", imbalance_zone:t.imbalance_zone||"",
       htf_bias:t.htf_bias||"", confluences:t.confluences||"",
@@ -455,7 +522,10 @@ function JournalInner() {
     load(); setSelected(null);
   };
 
+  const pending = trades.filter(t=>t.outcome==="PENDING");
+  const highlightId = Number(searchParams.get("id")) || null;
   const filtered = trades.filter(t=>
+    t.outcome!=="PENDING" &&
     (!filter.outcome||t.outcome===filter.outcome)&&
     (!filter.setup||t.setup===filter.setup)&&
     (!filter.direction||t.direction===filter.direction)
@@ -497,6 +567,11 @@ function JournalInner() {
           </button>
         </div>
       </div>
+
+      {/* Sinais do motor por validar */}
+      {pending.length>0 && (
+        <PendingSignals rows={pending} highlightId={highlightId} onValidate={openEdit} onDiscard={del} />
+      )}
 
       {/* Form */}
       {showForm && (

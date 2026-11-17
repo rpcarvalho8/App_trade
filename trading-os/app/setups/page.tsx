@@ -35,6 +35,30 @@ function ImgModal({ src, label, onClose }: { src: string; label: string; onClose
   );
 }
 
+const ENGINE_LABELS: Record<string, string> = {
+  "xauusd-london-structure": "XAUUSD · London Structure",
+  "solusd-smc-3step": "SOLUSD · SMC 3-Step",
+  "xauusd-htf-rotation": "XAUUSD · HTF Rotation",
+  "solusd-htf-rotation": "SOLUSD · HTF Rotation",
+};
+
+/** Mostra se o setup corre no motor de sinais e em que estratégias (liga a /signals). */
+function EngineBadge({ raw }: { raw: unknown }) {
+  let ids: string[] = [];
+  try { ids = JSON.parse(String(raw || "[]")); } catch { ids = []; }
+  if (!Array.isArray(ids) || ids.length === 0) return null;
+  return (
+    <div style={{ display:"flex",flexWrap:"wrap",gap:4,marginTop:6 }} onClick={e=>e.stopPropagation()}>
+      {ids.map(id => (
+        <Link key={id} href={`/signals#${id}`} title="Ver o cartão deste motor em /signals"
+          style={{ fontSize:9,padding:"2px 8px",borderRadius:10,background:"#052e16",color:"#4ade80",border:"1px solid #4ade8055",textDecoration:"none",fontWeight:600 }}>
+          ● MOTOR · {ENGINE_LABELS[id] || id}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function StepBadge({ n }: { n: number }) {
   const cols = ["#4af0c4","#c084fc","#60a5fa","#fbbf24","#4ade80"];
   const col = cols[(n-1) % cols.length];
@@ -156,6 +180,7 @@ export default function SetupsPage() {
                       <div>
                         <div style={{ fontSize:15,fontWeight:700,color:"#e2e8f0",marginBottom:4 }}>{s.name}</div>
                         <span style={{ fontSize:9,padding:"2px 10px",borderRadius:10,background:col+"22",color:col,fontWeight:600 }}>{s.category}</span>
+                        <EngineBadge raw={s.engine_strategies} />
                       </div>
                       {wr!==null && (
                         <div style={{ textAlign:"right" }}>
@@ -287,6 +312,7 @@ export default function SetupsPage() {
                     <div>
                       <div style={{ fontSize:13,fontWeight:600,color:"#e2e8f0",marginBottom:3 }}>{s.name}</div>
                       <span style={{ fontSize:9,padding:"1px 8px",borderRadius:10,background:col+"22",color:col }}>{s.category}</span>
+                      <EngineBadge raw={s.engine_strategies} />
                     </div>
                     {wr!==null&&<span style={{ fontSize:12,fontWeight:600,color:wr>=60?C.green:wr>=45?C.amber:C.red }}>{wr}%</span>}
                   </div>

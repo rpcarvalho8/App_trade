@@ -28,7 +28,7 @@ import {
 } from "@/lib/marketdata/xtb-client";
 import { getSolBuffers, getSolSpread, onSolTick, startKrakenClient } from "@/lib/marketdata/kraken-client";
 import { aggregateCandles } from "@/lib/marketdata/ohlc-utils";
-import { emitSignalAlert, emitSetupAlert } from "@/lib/signals";
+import { emitSignalAlert, emitSetupAlert, checkActiveSignals } from "@/lib/signals";
 import { fetchCalendar } from "@/lib/morning-brief";
 
 type Asset = "XAUUSD" | "SOLUSD";
@@ -180,6 +180,12 @@ function mapBuffers(snap: Record<string, Candle[]>): Record<string, Candle[]> {
 async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): Promise<void> {
   const s = state();
   const now = base.now ?? Date.now();
+  // Contra-triggers: sinais ainda por executar que o preço invalidou ou cuja validade acabou.
+  if (base.price != null) {
+    await checkActiveSignals(asset, base.price, now).catch((e) =>
+      console.warn("[signal-runner] contra-trigger:", e?.message || e)
+    );
+  }
   for (const strategy of STRATEGIES_BY_SYMBOL[asset]) {
     const d = s.diag[strategy.id];
     const day = utcDay(now);
@@ -330,7 +336,7 @@ export function getRunnerDebug() {
     newsBlackout: s.newsBlackout,
     xau,
     solReady: s.solReady,
-    strategies: ALL.map((x) => ({ id: x.id, symbol: x.symbol, name: x.name, description: x.description ?? null })),
+    strategies: ALL.map((x) => ({ id: x.id, symbol: x.symbol, name: x.name, description: x.description ?? null, utcHours: x.session.utcHours ?? null, entryTf: x.timeframes.entry, steps: [...x.sequence].sort((a, b) => a.step - b.step).map((st) => String(st.type)) })),
     diag: s.diag,
     status: !xau.ready ? (xau.status === "error" ? "error" : "warming_up") : s.solReady ? "ready" : "warming_up",
   };

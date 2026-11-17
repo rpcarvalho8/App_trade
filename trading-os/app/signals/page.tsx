@@ -1,17 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { validateLevels } from "@/lib/risk";
-
-const C = {
-  accent: "#4af0c4",
-  green: "#4ade80",
-  red: "#f87171",
-  amber: "#fbbf24",
-  muted: "#475569",
-  secondary: "#94a3b8",
-  border: "#1e2d45",
-  card: "#0d1929",
-};
+import { PLAYBOOKS } from "@/lib/playbooks";
 
 type AssetStatus = {
   status?: string;
@@ -21,25 +12,15 @@ type AssetStatus = {
   label?: string;
   message?: string;
   disclaimer?: string;
-  ready?: boolean;
   bars?: Record<string, number>;
   cacheBars?: Record<string, number>;
   lastError?: string;
   pollPlan?: string;
-  credits?: {
-    day?: string;
-    used?: number;
-    limit?: number;
-    remaining?: number;
-    pct?: number;
-    byTf?: Record<string, number>;
-  };
+  credits?: { used?: number; limit?: number; pct?: number; byTf?: Record<string, number> };
 };
 
 type AssetDiag = {
   strategyId?: string;
-  symbol?: string;
-  name?: string;
   waitingReason?: string | null;
   lastArmedAt?: number | null;
   signalsToday?: number;
@@ -51,6 +32,23 @@ type AssetDiag = {
   lastReject: { reason: string; at: number } | null;
   rejects: { day: string; counts: Record<string, number> };
   lastSignalAt: number | null;
+};
+
+type StrategyInfo = {
+  id: string;
+  symbol: "XAUUSD" | "SOLUSD";
+  name: string;
+  description?: string | null;
+  utcHours?: [number, number] | null;
+  entryTf?: string;
+  steps?: string[];
+};
+
+const SETUP_NAME: Record<string, string> = {
+  "xauusd-london-structure": "XAUUSD — London Structure",
+  "solusd-smc-3step": "SMC 3-Step Scalping",
+  "xauusd-htf-rotation": "HTF Imbalance Rotation",
+  "solusd-htf-rotation": "HTF Imbalance Rotation",
 };
 
 const STEP_LABELS: Record<string, string> = {
@@ -105,6 +103,22 @@ const REJECT_LABELS: Record<string, string> = {
 const hhmm = (ts: number | null | undefined) =>
   ts ? new Date(ts).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" }) : "—";
 
+const fmtPrice = (v: unknown, symbol?: string) => {
+  const n = Number(v);
+  return v == null || v === "" || !Number.isFinite(n) || n <= 0 ? "—" : n.toFixed(symbol === "SOLUSD" ? 3 : 2);
+};
+
+type Badge = { label: string; cls: string };
+
+/** Um único estado por cartão: o que interessa para decidir se olhas para o gráfico. */
+function cardBadge(st: StrategyInfo, asset: AssetStatus, diag?: AssetDiag): Badge {
+  if (diag?.idleReason?.startsWith("fora do horário")) return { label: "FORA DE HORÁRIO", cls: "bg-slate-800 text-slate-400 border-slate-600" };
+  if (PLAYBOOKS[st.symbol]?.status === "observacao") return { label: "OBSERVAÇÃO / DEMO", cls: "bg-purple-950 text-purple-300 border-purple-700" };
+  if (asset.status === "error") return { label: "ERRO DE DADOS", cls: "bg-red-950 text-red-300 border-red-700" };
+  if (asset.status === "ready") return { label: "READY / LIVE", cls: "bg-emerald-950 text-emerald-300 border-emerald-700" };
+  return { label: "A AQUECER", cls: "bg-amber-950 text-amber-300 border-amber-700" };
+}
+
 export default function SignalsPage() {
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
@@ -129,134 +143,212 @@ export default function SignalsPage() {
   }, []);
 
   const status = data?.status || "—";
-  const xau: AssetStatus = data?.assets?.XAUUSD || {};
-  const sol: AssetStatus = data?.assets?.SOLUSD || {};
+  const assets: Record<string, AssetStatus> = { XAUUSD: data?.assets?.XAUUSD || {}, SOLUSD: data?.assets?.SOLUSD || {} };
   const signals: any[] = data?.signals || [];
+  const strategies: StrategyInfo[] = data?.runner?.strategies || [];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 1100 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+    <div className="flex max-w-6xl flex-col gap-6">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 2 }}>TRADING OS</div>
-          <div style={{ fontSize: 22, fontWeight: 600, color: C.accent }}>Motor de Sinais</div>
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-            Só alertas — sem execução automática. Estado:{" "}
-            <span style={{ color: status === "ready" ? C.green : status === "error" ? C.red : C.amber }}>
-              {status}
+          <div className="text-[10px] tracking-[0.2em] text-slate-500">TRADING OS</div>
+          <h1 className="text-2xl font-semibold text-[#4af0c4]">Motor de Sinais</h1>
+          <div className="mt-1 text-xs text-slate-400">
+            Só alertas, execução manual. Cada sinal cria uma linha pendente no journal.{" "}
+            <span className={status === "ready" ? "text-emerald-400" : status === "error" ? "text-red-400" : "text-amber-400"}>
+              Motor: {status}
             </span>
           </div>
         </div>
-        <button className="btn-ghost" onClick={load} style={{ fontSize: 11 }}>
+        <button className="btn-ghost text-xs" onClick={load}>
           Atualizar
         </button>
       </div>
 
-      {err && (
-        <div style={{ background: "#3b1a1a", border: `1px solid ${C.red}55`, color: "#fca5a5", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-          Falha a carregar: {err}
-        </div>
-      )}
+      {err && <div className="rounded-md border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">Falha a carregar: {err}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
-        {(data?.runner?.strategies || []).map((st: { id: string; symbol: string; name: string; description?: string | null }) => (
-          <AssetCard
-            key={st.id}
-            title={`${st.symbol} · ${st.name}`}
-            subtitle={st.description || undefined}
-            asset={st.symbol === "XAUUSD" ? xau : sol}
-            diag={data?.runner?.diag?.[st.id]}
-            now={data?.now}
-            forceBeta={st.symbol === "XAUUSD"}
-          />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {strategies.map((st) => (
+          <StrategyCard key={st.id} st={st} asset={assets[st.symbol] || {}} diag={data?.runner?.diag?.[st.id]} now={data?.now} />
         ))}
       </div>
 
-      <div>
-        <div style={{ fontSize: 11, color: C.muted, letterSpacing: 1, marginBottom: 10 }}>
-          SINAIS RECENTES ({signals.length})
-        </div>
+      <section>
+        <h2 className="mb-3 text-xs font-semibold tracking-wider text-slate-400">SINAIS RECENTES ({signals.length})</h2>
         {signals.length === 0 ? (
-          <div style={{ color: C.muted, fontSize: 12, padding: 16, background: C.card, borderRadius: 8, border: `1px solid ${C.border}` }}>
-            Ainda sem sinais emitidos. Em warming_up o XAUUSD não avalia confluences.
-          </div>
+          <div className="rounded-lg border border-[#1e2d45] bg-[#0d1929] p-4 text-sm text-slate-400">Ainda sem sinais emitidos.</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="flex flex-col gap-2">
             {signals.map((sig) => (
-              <div
-                key={sig.id}
-                style={{
-                  background: C.card,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 8,
-                  padding: "12px 14px",
-                  display: "grid",
-                  gridTemplateColumns: "auto 1fr auto",
-                  gap: 12,
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ fontSize: 12, fontWeight: 600, color: sig.direction === "long" ? C.green : C.red }}>
-                  {String(sig.symbol)} {String(sig.direction).toUpperCase()}
-                  {sig.symbol === "XAUUSD" && (
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        fontSize: 9,
-                        color: C.amber,
-                        border: `1px solid ${C.amber}66`,
-                        padding: "1px 6px",
-                        borderRadius: 4,
-                        letterSpacing: 0.5,
-                      }}
-                    >
-                      BETA
-                    </span>
-                  )}
-                </div>
-                <SignalLevels sig={sig} />
-                <div style={{ fontSize: 10, color: C.muted }}>{sig.created_at}</div>
-              </div>
+              <SignalRow key={sig.id} sig={sig} />
             ))}
           </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+const SIGNAL_STATE: Record<string, { label: string; cls: string }> = {
+  active: { label: "ACTIVO", cls: "text-emerald-300 border-emerald-700" },
+  invalidated: { label: "INVALIDADO", cls: "text-red-300 border-red-700" },
+  expired: { label: "EXPIRADO", cls: "text-slate-400 border-slate-600" },
+  reversal: { label: "CONTRARIADO", cls: "text-red-300 border-red-700" },
+};
+
+function SignalRow({ sig }: { sig: Record<string, any> }) {
+  const symbol = String(sig.symbol);
+  const side = String(sig.direction).toLowerCase() === "long" ? "LONG" : "SHORT";
+  const errors = validateLevels(side, Number(sig.entry), Number(sig.stop_loss), Number(sig.take_profit));
+  const valid = errors.length === 0;
+  const state = SIGNAL_STATE[String(sig.status || "active")] || SIGNAL_STATE.active;
+  const validated = sig.trade_outcome && sig.trade_outcome !== "PENDING";
+  const mesaHref = `/sessao?${new URLSearchParams({
+    asset: symbol,
+    dir: side,
+    entry: String(sig.entry ?? ""),
+    sl: String(sig.stop_loss ?? ""),
+    tp: String(sig.take_profit ?? ""),
+  }).toString()}`;
+  const cell = (label: string, value: string, cls = "text-slate-100") => (
+    <span className="whitespace-nowrap">
+      <span className="text-slate-500">{label} </span>
+      <span className={`font-semibold ${cls}`}>{value}</span>
+    </span>
+  );
+  return (
+    <div className="grid grid-cols-1 items-center gap-3 rounded-lg border border-[#1e2d45] bg-[#0d1929] px-4 py-3 lg:grid-cols-[200px_1fr_auto]">
+      <div>
+        <div className={`text-sm font-bold ${side === "LONG" ? "text-emerald-400" : "text-red-400"}`}>
+          {symbol} {side}
+        </div>
+        <div className="text-[11px] text-slate-400">{SETUP_NAME[sig.strategy_id] || sig.strategy_id}</div>
+        <div className="text-[10px] text-slate-500">
+          #{sig.id} · {sig.created_at}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
+        {cell("PE", fmtPrice(sig.entry, symbol))}
+        {cell("SL", fmtPrice(sig.stop_loss, symbol), "text-red-400")}
+        {sig.tp1 != null && cell("TP1", fmtPrice(sig.tp1, symbol), "text-emerald-400")}
+        {cell(sig.tp1 != null ? "TP2" : "TP", fmtPrice(sig.take_profit, symbol), "text-emerald-400")}
+        {cell("R:R", Number(sig.rr || 0).toFixed(2), "text-amber-300")}
+        {sig.lot_suggested != null && cell("Lote", String(sig.lot_suggested))}
+        <span className={`rounded border px-1.5 py-0.5 text-[10px] ${state.cls}`}>{validated ? "VALIDADO NO JOURNAL" : state.label}</span>
+        {Number(sig.executable) === 0 && (
+          <span
+            className="rounded border border-red-700 px-1.5 py-0.5 text-[10px] text-red-300"
+            title={sig.max_stop != null ? `Stop máximo para o teu capital: ${fmtPrice(sig.max_stop, symbol)}` : undefined}
+          >
+            NÃO EXECUTÁVEL
+          </span>
+        )}
+        {!valid && (
+          <span className="rounded border border-red-700 px-1.5 py-0.5 text-[10px] text-red-300" title={errors.join(" ")}>
+            NÍVEIS INVÁLIDOS
+          </span>
+        )}
+      </div>
+      <div className="flex gap-2">
+        {sig.trade_id ? (
+          <Link href={`/journal?id=${sig.trade_id}`} className="rounded border border-[#2d4a6b] bg-[#0a1929] px-3 py-1.5 text-xs text-sky-300 hover:bg-[#13243a]">
+            Abrir no Journal
+          </Link>
+        ) : (
+          <span className="cursor-not-allowed rounded border border-[#1e2d45] px-3 py-1.5 text-xs text-slate-600" title="Sinal antigo, sem linha no journal">
+            Abrir no Journal
+          </span>
+        )}
+        {valid && sig.status !== "invalidated" && sig.status !== "reversal" ? (
+          <Link href={mesaHref} className="rounded border border-[#4af0c4] bg-[#0f4c3a] px-3 py-1.5 text-xs text-[#4af0c4] hover:bg-[#13604a]">
+            Carregar na Mesa
+          </Link>
+        ) : (
+          <span className="cursor-not-allowed rounded border border-[#1e2d45] px-3 py-1.5 text-xs text-slate-600">Carregar na Mesa</span>
         )}
       </div>
     </div>
   );
 }
 
-const fmtPrice = (v: unknown) => {
-  const n = Number(v);
-  return v == null || v === "" || !Number.isFinite(n) || n <= 0 ? "—" : n.toFixed(2);
-};
-
-/** Entrada, SL e TP de cada sinal — o que é preciso para pôr a ordem no MT5. */
-function SignalLevels({ sig }: { sig: Record<string, unknown> }) {
-  const side = String(sig.direction).toLowerCase() === "long" ? "LONG" : "SHORT";
-  const entry = Number(sig.entry);
-  const sl = Number(sig.stop_loss);
-  const tp = Number(sig.take_profit);
-  // Sinais antigos podem ter níveis em falta ou do lado errado: não servem para operar.
-  const errors = validateLevels(side, entry, sl, tp);
-  const risk = Math.abs(entry - sl);
-  const cell = (label: string, value: string, color: string) => (
-    <span style={{ whiteSpace: "nowrap" }}>
-      <span style={{ color: C.muted }}>{label} </span>
-      <span style={{ color, fontWeight: 600 }}>{value}</span>
-    </span>
-  );
+function StrategyCard({ st, asset, diag, now }: { st: StrategyInfo; asset: AssetStatus; diag?: AssetDiag; now?: number }) {
+  const badge = cardBadge(st, asset, diag);
+  const hours = st.utcHours ? `${String(st.utcHours[0]).padStart(2, "0")}h–${String(st.utcHours[1]).padStart(2, "0")}h UTC` : "24h";
+  const beta = st.symbol === "XAUUSD" || asset.beta || asset.mode === "beta";
+  const sourceNote =
+    asset.disclaimer ||
+    (beta
+      ? "Cotação do agregador Twelve Data (XAU/USD), não da XTB. Pode divergir do xStation no spread; a entrada é sempre manual."
+      : "Velas e spread em tempo real da Kraken.");
   return (
-    <div style={{ fontSize: 11, color: C.secondary, display: "flex", flexWrap: "wrap", gap: "4px 16px", alignItems: "center" }}>
-      {cell("Entrada", fmtPrice(sig.entry), "#e2e8f0")}
-      {cell("SL", fmtPrice(sig.stop_loss), C.red)}
-      {cell("TP", fmtPrice(sig.take_profit), C.green)}
-      {cell("R:R", Number(sig.rr || 0).toFixed(2), C.secondary)}
-      {Number.isFinite(risk) && risk > 0 && cell("Risco", `${risk.toFixed(2)} USD/unid.`, C.muted)}
-      {errors.length > 0 && (
-        <span title={errors.join(" ")} style={{ color: C.red, fontSize: 10, border: `1px solid ${C.red}55`, padding: "1px 6px", borderRadius: 4 }}>
-          INVÁLIDO — não operar
-        </span>
+    <div id={st.id} className="flex scroll-mt-4 flex-col rounded-lg border border-[#1e2d45] bg-[#0d1929] p-4 target:border-[#4af0c4]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-base font-semibold text-slate-100">
+            {st.symbol} · {SETUP_NAME[st.id] || st.name}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500">
+            Fonte: {asset.source || "—"}
+            <span className="cursor-help rounded-full border border-slate-600 px-1 text-[9px] text-slate-400" title={sourceNote}>
+              i
+            </span>
+          </div>
+        </div>
+        <span className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${badge.cls}`}>{badge.label}</span>
+      </div>
+
+      <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded bg-[#0a1220] px-2 py-2">
+          <dt className="text-[10px] text-slate-500">Horário</dt>
+          <dd className="text-sm font-semibold text-slate-200">{hours}</dd>
+        </div>
+        <div className="rounded bg-[#0a1220] px-2 py-2">
+          <dt className="text-[10px] text-slate-500">Sinais hoje</dt>
+          <dd className="text-sm font-semibold text-slate-200">{diag?.signalsToday ?? 0}</dd>
+        </div>
+        <div className="rounded bg-[#0a1220] px-2 py-2">
+          <dt className="text-[10px] text-slate-500">Último sinal</dt>
+          <dd className="text-sm font-semibold text-slate-200">{diag?.lastSignalAt ? hhmm(diag.lastSignalAt) : "—"}</dd>
+        </div>
+      </dl>
+
+      {st.steps && st.steps.length > 0 && (
+        <ol className="mt-3 flex flex-wrap gap-1 text-[10px]">
+          {st.steps.map((type, i) => {
+            const done = diag ? i < diag.step : false;
+            const current = diag ? i === diag.step : false;
+            return (
+              <li
+                key={`${type}-${i}`}
+                className={`rounded border px-1.5 py-0.5 ${
+                  done ? "border-emerald-700 text-emerald-300" : current ? "border-amber-600 text-amber-300" : "border-slate-700 text-slate-500"
+                }`}
+              >
+                {i + 1}. {STEP_LABELS[type] || type}
+              </li>
+            );
+          })}
+        </ol>
       )}
-      <span style={{ color: C.muted, fontSize: 10 }}>{String(sig.strategy_id)}</span>
+
+      <details className="group mt-3 border-t border-[#1e2d45] pt-2 text-[11px] text-slate-400">
+        <summary className="cursor-pointer select-none text-slate-500 hover:text-slate-300">Diagnóstico Técnico</summary>
+        <div className="mt-2 space-y-1">
+          <DiagBlock diag={diag} now={now} />
+          {asset.pollPlan && <div>Polling: {asset.pollPlan}</div>}
+          {asset.credits && (
+            <div className={asset.credits.pct != null && asset.credits.pct >= 80 ? "text-amber-400" : ""}>
+              Créditos TD hoje: {asset.credits.used ?? 0}/{asset.credits.limit ?? 800}
+              {asset.credits.pct != null ? ` (${asset.credits.pct}%)` : ""}
+            </div>
+          )}
+          {asset.bars && <div>Barras: {Object.entries(asset.bars).map(([k, v]) => `${k}=${v}`).join(" · ")}</div>}
+          {asset.cacheBars && Object.keys(asset.cacheBars).length > 0 && (
+            <div>Cache DB: {Object.entries(asset.cacheBars).map(([k, v]) => `${k}=${v}`).join(" · ")}</div>
+          )}
+          {asset.lastError && <div className="text-red-400">{asset.lastError}</div>}
+        </div>
+      </details>
     </div>
   );
 }
@@ -267,144 +359,29 @@ function DiagBlock({ diag, now }: { diag?: AssetDiag; now?: number }) {
   const stale = !diag.lastEvalAt || (now != null && now - diag.lastEvalAt > 5 * 60_000);
   const counts = Object.entries(diag.rejects?.counts || {}).sort((a, b) => b[1] - a[1]);
   return (
-    <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.border}`, fontSize: 11, lineHeight: 1.6 }}>
+    <>
       {diag.idleReason ? (
-        <div style={{ color: C.amber }}>Parado: {diag.idleReason}</div>
+        <div className="text-amber-400">Parado: {diag.idleReason}</div>
       ) : stale ? (
-        <div style={{ color: C.amber }}>Sem avaliações desde {hhmm(diag.lastEvalAt)}: sem preços a chegar.</div>
+        <div className="text-amber-400">Sem avaliações desde {hhmm(diag.lastEvalAt)}: sem preços a chegar.</div>
       ) : (
-        <div style={{ color: C.secondary }}>
+        <div>
           Passo {Math.min(diag.step + 1, diag.totalSteps)}/{diag.totalSteps}: à espera de{" "}
-          <span style={{ color: "#e2e8f0" }}>{STEP_LABELS[diag.nextStepType || ""] || diag.nextStepType || "—"}</span>
-          <span style={{ color: C.muted }}> · avaliado às {hhmm(diag.lastEvalAt)}</span>
-          {diag.waitingReason && (
-            <div style={{ color: C.muted, fontSize: 10 }}>Agora: {WAIT_LABELS[diag.waitingReason] || diag.waitingReason}</div>
-          )}
+          <span className="text-slate-200">{STEP_LABELS[diag.nextStepType || ""] || diag.nextStepType || "—"}</span> · avaliado às{" "}
+          {hhmm(diag.lastEvalAt)}
+          {diag.waitingReason && <div className="text-slate-500">Agora: {WAIT_LABELS[diag.waitingReason] || diag.waitingReason}</div>}
         </div>
       )}
-      {diag.lastArmedAt ? <div style={{ color: C.amber }}>Último setup armado: {hhmm(diag.lastArmedAt)}</div> : null}
-      <div style={{ color: C.muted }}>Sinais hoje: {diag.signalsToday ?? 0}</div>
-      <div style={{ color: C.muted }}>Último sinal: {diag.lastSignalAt ? hhmm(diag.lastSignalAt) : "nenhum desde o arranque"}</div>
+      {diag.lastArmedAt ? <div className="text-amber-400">Último setup armado: {hhmm(diag.lastArmedAt)}</div> : null}
       {diag.lastReject && (
-        <div style={{ color: C.muted }}>
+        <div>
           Último setup descartado às {hhmm(diag.lastReject.at)}:{" "}
-          <span style={{ color: C.amber }}>{REJECT_LABELS[diag.lastReject.reason] || diag.lastReject.reason}</span>
+          <span className="text-amber-400">{REJECT_LABELS[diag.lastReject.reason] || diag.lastReject.reason}</span>
         </div>
       )}
       {counts.length > 0 && (
-        <div style={{ color: C.muted, fontSize: 10 }}>
-          Descartados hoje: {counts.map(([k, v]) => `${REJECT_LABELS[k] || k} ${v}`).join(" · ")}
-        </div>
+        <div className="text-slate-500">Descartados hoje: {counts.map(([k, v]) => `${REJECT_LABELS[k] || k} ${v}`).join(" · ")}</div>
       )}
-    </div>
-  );
-}
-
-function AssetCard({
-  title,
-  subtitle,
-  asset,
-  diag,
-  now,
-  forceBeta,
-}: {
-  title: string;
-  subtitle?: string;
-  asset: AssetStatus;
-  diag?: AssetDiag;
-  now?: number;
-  forceBeta?: boolean;
-}) {
-  const beta = forceBeta || asset.beta || asset.mode === "beta";
-  const st = asset.status || "—";
-  const stColor = st === "ready" ? C.green : st === "error" ? C.red : C.amber;
-  return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>{title}</div>
-          {subtitle && <div style={{ fontSize: 10, color: C.muted, marginTop: 2, maxWidth: 420 }}>{subtitle}</div>}
-        </div>
-        {beta && (
-          <span
-            title={
-              asset.disclaimer ||
-              "Cotação de agregador de mercado (Twelve Data), não da corretora — possível divergência de spread"
-            }
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: 1,
-              color: C.amber,
-              background: "#2a1f08",
-              border: `1px solid ${C.amber}66`,
-              padding: "3px 8px",
-              borderRadius: 4,
-            }}
-          >
-            BETA / OBSERVAÇÃO
-          </span>
-        )}
-      </div>
-      {beta && (
-        <div
-          style={{
-            fontSize: 10,
-            color: C.amber,
-            background: "#1a1508",
-            border: `1px solid ${C.amber}33`,
-            borderRadius: 6,
-            padding: "8px 10px",
-            marginBottom: 10,
-            lineHeight: 1.5,
-          }}
-        >
-          {asset.disclaimer ||
-            "O preço/OHLC vem do agregador Twelve Data (XAU/USD), não diretamente da corretora XTB. Pode haver divergência de spread face ao xStation — a entrada continua manual."}
-        </div>
-      )}
-      <div style={{ fontSize: 11, color: C.secondary, lineHeight: 1.6 }}>
-        <div>
-          Estado: <span style={{ color: stColor }}>{st}</span>
-          {asset.label ? ` · ${asset.label}` : ""}
-        </div>
-        <div>Fonte: {asset.source || "—"}</div>
-        {asset.message && <div style={{ color: C.muted, marginTop: 4 }}>{asset.message}</div>}
-        {asset.pollPlan && (
-          <div style={{ color: C.muted, marginTop: 4, fontSize: 10 }}>Poll: {asset.pollPlan}</div>
-        )}
-        {asset.credits && (
-          <div style={{ color: asset.credits.pct != null && asset.credits.pct >= 80 ? C.amber : C.muted, marginTop: 4, fontSize: 10 }}>
-            Créditos TD hoje: {asset.credits.used ?? 0}/{asset.credits.limit ?? 800}
-            {asset.credits.pct != null ? ` (${asset.credits.pct}%)` : ""}
-            {asset.credits.byTf
-              ? ` · ${Object.entries(asset.credits.byTf)
-                  .map(([k, v]) => `${k}=${v}`)
-                  .join(" ")}`
-              : ""}
-          </div>
-        )}
-        {asset.lastError && (
-          <div style={{ color: C.red, marginTop: 6, fontSize: 10 }}>{asset.lastError}</div>
-        )}
-        {asset.bars && (
-          <div style={{ marginTop: 8, fontSize: 10, color: C.muted }}>
-            Barras:{" "}
-            {Object.entries(asset.bars)
-              .map(([k, v]) => `${k}=${v}`)
-              .join(" · ")}
-          </div>
-        )}
-        {asset.cacheBars && Object.keys(asset.cacheBars).length > 0 && (
-          <div style={{ marginTop: 4, fontSize: 10, color: C.muted }}>
-            Cache DB:{" "}
-            {Object.entries(asset.cacheBars)
-              .map(([k, v]) => `${k}=${v}`)
-              .join(" · ")}
-          </div>
-        )}
-      </div>
-      <DiagBlock diag={diag} now={now} />
-    </div>
+    </>
   );
 }

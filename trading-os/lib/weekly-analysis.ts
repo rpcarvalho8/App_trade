@@ -72,7 +72,7 @@ export async function generateWeeklyReport(
 
   // Trades in the week (dates are stored as YYYY-MM-DD or ISO; compare on date prefix).
   const tradesRes = await db.execute({
-    sql: "SELECT * FROM trades WHERE substr(date,1,10) >= ? AND substr(date,1,10) <= ? ORDER BY date, id",
+    sql: "SELECT * FROM trades WHERE substr(date,1,10) >= ? AND substr(date,1,10) <= ? AND outcome != 'PENDING' ORDER BY date, id",
     args: [week_start, week_end],
   });
   const trades = tradesRes.rows as any[];
