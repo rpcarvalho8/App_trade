@@ -10,14 +10,6 @@
     "entry": "M5"
   },
   "session": {
-    "allowed": [
-      "london",
-      "ny"
-    ],
-    "utcHours": [
-      7,
-      22
-    ],
     "newsBlackoutMinutes": 30
   },
   "sequence": [

@@ -15,6 +15,7 @@ const navGroups = [
   { title:"OPERAR", items:[
     { href:"/sessao", label:"Mesa de Operação", icon:"▶" },
     { href:"/signals", label:"Sinais", icon:"⚑" },
+    { href:"/analise-visual", label:"Análise Visual", icon:"⌕" },
   ]},
   { title:"REVER", items:[
     { href:"/journal", label:"Journal", icon:"◉" },
