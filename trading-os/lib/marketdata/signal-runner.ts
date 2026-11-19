@@ -31,6 +31,7 @@ import { getSolBuffers, getSolSpread, onSolTick, startKrakenClient } from "@/lib
 import { aggregateCandles } from "@/lib/marketdata/ohlc-utils";
 import { emitSignalAlert, emitSetupAlert, checkActiveSignals } from "@/lib/signals";
 import { broadcastAlert } from "@/lib/alert-ws";
+import { sendAlertEmail } from "@/lib/alert-email";
 import { fetchCalendar } from "@/lib/morning-brief";
 
 type Asset = "XAUUSD" | "SOLUSD";
@@ -273,11 +274,16 @@ async function evalXau(price: number): Promise<void> {
         id: `xau-feed-stale-${now}`,
         ts: now,
         type: "setup",
-        level: "warning",
+        level: "critical",
         asset: "XAUUSD",
         title: "XAUUSD · feed parado, sem sinais",
         message: `${fresh.reason}. O motor do ouro está em pausa até chegarem velas novas.`,
+        meta: { kind: "feed_stale", lastBarAt: fresh.lastBarAt },
       });
+      sendAlertEmail(
+        "XAUUSD: feed parado, motor do ouro sem sinais",
+        `${fresh.reason}.\n\nO motor do ouro está em pausa até chegarem velas novas do Twelve Data.\nVê o estado em /signals.`
+      ).catch((e) => console.warn("[signal-runner] email feed parado:", e?.message || e));
     }
     return;
   }

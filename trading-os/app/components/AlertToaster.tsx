@@ -38,13 +38,16 @@ function saveSeen(seen: Set<string>) {
   } catch {}
 }
 
+/** Aviso do próprio motor (ex.: feed do ouro parado): fica no ecrã até o fechares. */
+const isFeedAlert = (a: MarketAlert) => a.meta?.kind === "feed_stale";
+
 const important = (a: MarketAlert) => a.type === "signal" || a.type === "setup" || a.level === "critical";
 
 /** Notificação do sistema operativo: aparece mesmo com o separador em segundo plano. */
 function systemNotify(a: MarketAlert) {
   try {
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    const n = new Notification(a.title, { body: a.message, tag: a.id, requireInteraction: a.type === "signal" });
+    const n = new Notification(a.title, { body: a.message, tag: a.id, requireInteraction: a.type === "signal" || isFeedAlert(a) });
     n.onclick = () => {
       window.focus();
       if (a.type === "signal" || a.type === "setup") window.location.href = "/signals";
@@ -113,8 +116,9 @@ export default function AlertToaster() {
     setToasts((prev) => [a, ...prev].slice(0, 5));
     if (important(a)) {
       playAlertSound(a.type);
-      if (document.visibilityState !== "visible" || a.type === "signal") systemNotify(a);
+      if (document.visibilityState !== "visible" || a.type === "signal" || isFeedAlert(a)) systemNotify(a);
     }
+    if (isFeedAlert(a)) return;
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== a.id));
     }, a.type === "signal" ? 60000 : a.type === "setup" ? 30000 : AUTO_DISMISS_MS);
@@ -225,7 +229,7 @@ export default function AlertToaster() {
       {toasts.map((t) => {
         const st = LEVEL_STYLE[t.level] || LEVEL_STYLE.info;
         const typeLabel =
-          t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
+          isFeedAlert(t) ? "FEED" : t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
         return (
           <div
             key={t.id}
