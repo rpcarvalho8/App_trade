@@ -3,6 +3,7 @@ import { initDB } from "@/lib/db";
 import { loadCachedCandles } from "@/lib/marketdata/candle-cache";
 import { STRATEGIES_BY_SYMBOL } from "@/lib/strategies";
 import { replayStrategies } from "@/lib/strategies/replay";
+import { readEngineLog } from "@/lib/engine-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 const DAY = 86_400_000;
 
 /**
- * GET /api/signals/replay?days=3
+ * GET /api/signals/replay?days=3[&hours=7-20]
  * Corre as estratégias do ouro sobre as velas guardadas na cache local e mostra onde a sequência pára.
  * Não grava sinais nem envia alertas.
  */
@@ -26,13 +27,19 @@ export async function GET(req: Request) {
     loadCachedCandles("XAUUSD", "M15", from - 7 * DAY),
     loadCachedCandles("XAUUSD", "H4", from - 45 * DAY),
   ]);
-  const reports = replayStrategies(STRATEGIES_BY_SYMBOL.XAUUSD, { M5, M15, H4 }, from, to);
+  // ?hours=7-20 simula a janela horária antiga (para comparar com o que o live fez antes de 19/11).
+  const hm = /^(\d{1,2})-(\d{1,2})$/.exec(url.searchParams.get("hours") || "");
+  const utcHours = hm ? ([Number(hm[1]), Number(hm[2])] as [number, number]) : undefined;
+  const reports = replayStrategies(STRATEGIES_BY_SYMBOL.XAUUSD, { M5, M15, H4 }, from, to, { utcHours });
+  // O que o motor ao vivo registou no mesmo período (vazio antes desta versão).
+  const liveLog = await readEngineLog("XAUUSD", from).catch(() => []);
   return NextResponse.json({
     symbol: "XAUUSD",
-    window: { from: new Date(from).toISOString(), to: new Date(to).toISOString(), days },
+    window: { from: new Date(from).toISOString(), to: new Date(to).toISOString(), days, utcHours: utcHours ?? null },
     bars: { M5: M5.length, M15: M15.length, H4: H4.length },
     firstBar: { M5: M5[0]?.time ? new Date(M5[0].time).toISOString() : null },
     lastBar: { M5: M5.at(-1)?.time ? new Date(M5.at(-1)!.time).toISOString() : null },
     reports,
+    liveLog,
   });
 }
