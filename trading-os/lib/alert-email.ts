@@ -40,12 +40,23 @@ export async function sendSignalEmail(signal: EngineSignal, signalId: number): P
     `⚠ Motor só ALERTA — execução manual na corretora.`,
   ].join("\n");
 
+  return deliverEmail(to, subject, text, { signal, signalId });
+}
+
+/** Email genérico de aviso do motor (ex.: feed do ouro parado). Sem ALERT_EMAIL_TO não faz nada. */
+export async function sendAlertEmail(subject: string, text: string): Promise<boolean> {
+  const to = process.env.ALERT_EMAIL_TO || process.env.SIGNAL_EMAIL_TO;
+  if (!to) return false;
+  return deliverEmail(to, `[TradingOS] ${subject}`, text, {});
+}
+
+async function deliverEmail(to: string, subject: string, text: string, extra: Record<string, unknown>): Promise<boolean> {
   const webhook = process.env.ALERT_EMAIL_WEBHOOK;
   if (webhook) {
     const res = await fetch(webhook, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, subject, text, signal, signalId }),
+      body: JSON.stringify({ to, subject, text, ...extra }),
       signal: AbortSignal.timeout(10_000),
     });
     return res.ok;

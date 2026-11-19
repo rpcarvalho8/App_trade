@@ -70,4 +70,31 @@ describe("polling XAU (Twelve Data)", () => {
     expect(await pollXauOnce(Date.UTC(2026, 10, 21, 12))).toBe(false);
     expect(fetchMock.mock.calls.length).toBe(calls);
   });
+
+  it("depois de uma noite desligado pede as velas que faltam, não só 30", async () => {
+    const { incrementalSize } = await import("@/lib/marketdata/xtb-client");
+    const now = Date.UTC(2026, 10, 19, 8, 0);
+    expect(incrementalSize("M5", now - 10 * 60_000, now)).toBe(30);
+    // 10 h sem dados: 120 velas M5 + margem
+    expect(incrementalSize("M5", now - 10 * 3600_000, now)).toBe(122);
+    expect(incrementalSize("M15", now - 10 * 3600_000, now)).toBe(42);
+    // nunca mais do que o backfill completo
+    expect(incrementalSize("M5", now - 30 * 86400_000, now)).toBe(400);
+  });
+
+  it("feed parado com o mercado aberto fica marcado como stale", async () => {
+    const { pollXauOnce, getXauFreshness } = await import("@/lib/marketdata/xtb-client");
+    fetchMock.mockImplementation(async (tf: string, size: number) => candles(tf, size));
+    await pollXauOnce(Date.UTC(2026, 10, 17, 10, 0));
+    const last = Math.floor(Date.now() / STEP.M5) * STEP.M5;
+    expect(getXauFreshness(last + 10 * 60_000).stale).toBe(false);
+    const wed = new Date(last + 3 * 3600_000);
+    const h = wed.getUTCHours();
+    const closed = wed.getUTCDay() === 6 || wed.getUTCDay() === 0 || h === 21 || h === 22 || (wed.getUTCDay() === 5 && h >= 22);
+    const f = getXauFreshness(last + 3 * 3600_000);
+    expect(f.stale).toBe(!closed);
+    if (!closed) expect(f.reason).toMatch(/feed do ouro parado/);
+    // sábado nunca é stale
+    expect(getXauFreshness(Date.UTC(2026, 10, 21, 12)).stale).toBe(false);
+  });
 });

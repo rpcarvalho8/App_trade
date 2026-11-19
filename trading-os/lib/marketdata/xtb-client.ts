@@ -57,6 +57,9 @@ export interface XauMarketStatus {
   disclaimer: string;
   lastError?: string;
   pollPlan?: string;
+  /** Sem vela M5 nova há mais de 30 min com o mercado aberto. */
+  stale: boolean;
+  lastBarAt: number | null;
   credits?: ReturnType<typeof getTwelveDataCreditStats>;
 }
 
@@ -239,22 +242,70 @@ export function xauMarketClosed(now = Date.now()): boolean {
  * Actualiza um TF. Se o buffer ainda não tem o mínimo de barras (o backfill falhou ou veio curto),
  * volta a pedir o histórico completo; senão só pede quando abriu vela nova.
  */
-async function refreshTf(tf: string): Promise<boolean> {
+async function refreshTf(tf: string, now = Date.now()): Promise<boolean> {
   const s = state();
   const buf = s.buffers.get(tf)!;
   const needsBackfill = buf.length < MIN_BARS[tf];
-  if (!needsBackfill && !shouldFetchForNewCandle(tf)) return false;
-  const candles = await fetchTwelveDataOhlc(tf, needsBackfill ? BACKFILL_SIZE[tf] : 30);
+  if (!needsBackfill && !shouldFetchForNewCandle(tf, now)) return false;
+  const period = CANDLE_MS[tf] || tfToMs(tf);
+  const size = needsBackfill ? BACKFILL_SIZE[tf] : incrementalSize(tf, buf.last()?.time, now);
+  const candles = await fetchTwelveDataOhlc(tf, size);
   if (!candles.length) return false;
   const merged = new Map<number, Candle>();
   for (const e of buf.candles) merged.set(e.time, e);
   for (const c of candles) merged.set(c.time, c);
   buf.seed([...merged.values()]);
-  await saveCandlesToCache("XAUUSD", tf, needsBackfill ? candles : candles.slice(-20), "twelvedata");
-  const period = CANDLE_MS[tf] || tfToMs(tf);
-  s.lastFetchedBar[tf] = floorTime(Date.now(), period);
-  if (needsBackfill) console.log(`[xtb-client] TwelveData backfill ${tf}: ${candles.length} barras`);
+  await saveCandlesToCache("XAUUSD", tf, size > 30 ? candles : candles.slice(-20), "twelvedata");
+  s.lastFetchedBar[tf] = floorTime(now, period);
+  if (size > 30) console.log(`[xtb-client] TwelveData ${needsBackfill ? "backfill" : "buraco preenchido"} ${tf}: ${candles.length} barras`);
   return true;
+}
+
+/**
+ * Velas a pedir numa actualização normal: 30, ou as que faltam desde a última vela que temos.
+ * Antes eram sempre 30: depois de uma noite com o servidor desligado, o arranque pela cache
+ * deixava um buraco de horas no M5/M15 (30 velas M5 = 2h30) e o motor lia estrutura partida.
+ */
+export function incrementalSize(tf: string, lastBarTime: number | undefined, now = Date.now()): number {
+  if (lastBarTime == null) return BACKFILL_SIZE[tf] ?? 30;
+  const period = CANDLE_MS[tf] || tfToMs(tf);
+  const missing = Math.ceil((now - lastBarTime) / period) + 2;
+  return Math.max(30, Math.min(missing, BACKFILL_SIZE[tf] ?? 500));
+}
+
+/** Sem vela M5 nova há mais do que isto (com o mercado aberto) = feed parado. */
+export const XAU_STALE_MS = 30 * 60_000;
+
+export interface XauFreshness {
+  stale: boolean;
+  /** Abertura da última vela M5 que temos (epoch ms). */
+  lastBarAt: number | null;
+  ageMin: number | null;
+  reason: string | null;
+}
+
+/**
+ * O feed está vivo? Antes, se o Twelve Data deixasse de responder (quota, chave, plano),
+ * o estado ficava "ready" com as velas da cache e o motor avaliava um gráfico congelado:
+ * nenhum sinal, nenhum aviso. Pausa diária do ouro (21h–23h UTC) e fim-de-semana não contam.
+ */
+export function getXauFreshness(now = Date.now()): XauFreshness {
+  const s = state();
+  const last = s.buffers.get("M5")?.last()?.time ?? null;
+  if (last == null) return { stale: false, lastBarAt: null, ageMin: null, reason: null };
+  const age = now - (last + CANDLE_MS.M5);
+  const ageMin = Math.max(0, Math.round(age / 60_000));
+  const h = new Date(now).getUTCHours();
+  const pause = xauMarketClosed(now) || h === 21 || h === 22;
+  if (pause || age <= XAU_STALE_MS) return { stale: false, lastBarAt: last, ageMin, reason: null };
+  const hhmm = new Date(last).toISOString().slice(11, 16);
+  const err = s.lastError ? ` — último erro: ${s.lastError}` : "";
+  return {
+    stale: true,
+    lastBarAt: last,
+    ageMin,
+    reason: `feed do ouro parado: última vela M5 às ${hhmm} UTC (há ${ageMin} min)${err}`,
+  };
 }
 
 /** Estado a partir das barras que existem: fica "ready" assim que todos os TF têm o mínimo. */
@@ -279,7 +330,7 @@ export async function pollXauOnce(now = Date.now()): Promise<boolean> {
   const errors: string[] = [];
   for (const tf of XAU_TIMEFRAMES) {
     try {
-      if (await refreshTf(tf)) any = true;
+      if (await refreshTf(tf, now)) any = true;
     } catch (e: any) {
       errors.push(`${tf}: ${e?.message || e}`);
     }
@@ -393,8 +444,10 @@ export function getXauMarketStatus(): XauMarketStatus {
   const bars = barsSnapshot();
   const ready = s.status === "ready" && warmUpComplete();
   const beta = true;
+  const fresh = getXauFreshness();
   let message = "";
-  if (s.status === "warming_up") message = s.lastError ? `A tentar de novo: ${s.lastError}` : "A carregar OHLC histórico (backfill Twelve Data)…";
+  if (fresh.stale) message = fresh.reason!;
+  else if (s.status === "warming_up") message = s.lastError ? `A tentar de novo: ${s.lastError}` : "A carregar OHLC histórico (backfill Twelve Data)…";
   else if (s.status === "error") message = s.lastError || "Erro na fonte de dados XAU";
   else if (s.source === "twelvedata")
     message = s.lastError ? `OHLC via Twelve Data · último erro: ${s.lastError}` : "OHLC via Twelve Data (agregador) — não é o feed da prop firm";
@@ -412,6 +465,8 @@ export function getXauMarketStatus(): XauMarketStatus {
     disclaimer: DISCLAIMER,
     lastError: s.lastError,
     pollPlan: pollPlanSummary(),
+    stale: fresh.stale,
+    lastBarAt: fresh.lastBarAt,
     credits: getTwelveDataCreditStats(),
   };
 }
