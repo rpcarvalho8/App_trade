@@ -6,7 +6,7 @@
  *   TELEGRAM_CHAT_ID=123456789         (o teu id; envia /start ao bot e abre
  *                                       https://api.telegram.org/bot<TOKEN>/getUpdates)
  * Opcional:
- *   TELEGRAM_ALERT_TYPES=signal,setup,calendar   (por omissão: signal,setup)
+ *   TELEGRAM_ALERT_TYPES=signal,setup,calendar,study   (por omissão: signal,setup,study)
  *
  * Sem configuração não faz nada (não falha o motor).
  */
@@ -17,7 +17,7 @@ export function telegramConfigured(): boolean {
 }
 
 function allowedTypes(): Set<string> {
-  const raw = process.env.TELEGRAM_ALERT_TYPES || "signal,setup";
+  const raw = process.env.TELEGRAM_ALERT_TYPES || "signal,setup,study";
   return new Set(raw.split(",").map((x) => x.trim()).filter(Boolean));
 }
 
@@ -26,7 +26,7 @@ function escapeHtml(s: string): string {
 }
 
 export function formatTelegram(alert: MarketAlert): string {
-  const icon = alert.type === "signal" ? "🎯" : alert.type === "setup" ? "🟡" : alert.type === "calendar" ? "⚠️" : "📈";
+  const icon = alert.type === "signal" ? "🎯" : alert.type === "setup" ? "🟡" : alert.type === "calendar" ? "⚠️" : alert.type === "study" ? "📚" : "📈";
   return `${icon} <b>${escapeHtml(alert.title)}</b>\n${escapeHtml(alert.message)}`;
 }
 

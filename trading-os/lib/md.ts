@@ -4,7 +4,7 @@
  * Cobre exatamente o subconjunto de Markdown produzido pelo Morning Brief:
  *   - títulos # ## ###
  *   - blockquote >
- *   - listas não ordenadas (-)
+ *   - listas não ordenadas (-) e numeradas (1.)
  *   - tabelas GFM (| a | b |)
  *   - linha horizontal ---
  *   - inline: **negrito**, `código`, _ênfase_
@@ -44,8 +44,9 @@ export function mdToHtml(md: string): string {
   const out: string[] = [];
   let i = 0;
 
+  let listTag: "ul" | "ol" = "ul";
   const flushListIfOpen = (open: boolean) => {
-    if (open) out.push("</ul>");
+    if (open) out.push(`</${listTag}>`);
     return false;
   };
 
@@ -111,12 +112,16 @@ export function mdToHtml(md: string): string {
     }
 
     // itens de lista
-    if (/^[-*]\s+/.test(trimmed)) {
+    const li = trimmed.match(/^([-*]|\d+\.)\s+(.*)$/);
+    if (li) {
+      const tag = li[1].endsWith(".") ? "ol" : "ul";
+      if (listOpen && tag !== listTag) listOpen = flushListIfOpen(listOpen);
       if (!listOpen) {
-        out.push("<ul>");
+        listTag = tag;
+        out.push(`<${tag}>`);
         listOpen = true;
       }
-      out.push(`<li>${inline(escapeHtml(trimmed.replace(/^[-*]\s+/, "")))}</li>`);
+      out.push(`<li>${inline(escapeHtml(li[2]))}</li>`);
       i++;
       continue;
     }
@@ -129,7 +134,7 @@ export function mdToHtml(md: string): string {
       lines[i].trim() !== "" &&
       !/^(#{1,6})\s+/.test(lines[i].trim()) &&
       !/^>\s?/.test(lines[i].trim()) &&
-      !/^[-*]\s+/.test(lines[i].trim()) &&
+      !/^([-*]|\d+\.)\s+/.test(lines[i].trim()) &&
       !/^-{3,}$/.test(lines[i].trim()) &&
       !(lines[i].includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]))
     ) {

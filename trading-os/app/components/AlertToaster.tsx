@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 interface MarketAlert {
   id: string;
-  type: "price" | "calendar" | "signal" | "setup";
+  type: "price" | "calendar" | "signal" | "setup" | "study";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;
@@ -225,7 +225,7 @@ export default function AlertToaster() {
       {toasts.map((t) => {
         const st = LEVEL_STYLE[t.level] || LEVEL_STYLE.info;
         const typeLabel =
-          t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
+          t.type === "calendar" ? "CALENDÁRIO" : t.type === "study" ? "ESTUDO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
         return (
           <div
             key={t.id}

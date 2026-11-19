@@ -132,6 +132,8 @@ Traça Fibonacci do swing que causou o BOS. Compras só abaixo de 50% (desconto)
 
 ## 8. Plano de estudo de 6 semanas
 
+Este plano está no Morning Brief (cartão "Estudo"), com sessões fixas ao fim de semana — sábado 09:00–11:30 (teoria), domingo 09:00–11:00 (prática) e 18:00–18:45 (revisão e plano da semana) — uma micro-tarefa de 15 min por dia útil, lembrete às 08:30 de sábado e domingo e exportação para calendário (.ics). Detalhe de cada semana em lib/study-plan.ts.
+
 1. Semana 1 — Wyckoff completo: escreve as fases B a E (acumulação) e A a E (distribuição) por palavras tuas. Marca 5 ranges no XAUUSD H1 e 5 na SOL H4 com todos os eventos.
 2. Semana 2 — Elliott: escreve as 3 regras e as 4 correções. Conta as ondas do último impulso D1 de cada activo com contagem alternativa.
 3. Semana 3 — SMC estrutura e liquidez: preenche as notas vazias (Break_of_Structure, Liquidity_Pools). Marca PDH/PDL/PWH/PWL todos os dias e regista se foram varridos.

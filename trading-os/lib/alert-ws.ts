@@ -12,7 +12,7 @@ import type { WebSocketServer, WebSocket } from "ws";
 
 export interface MarketAlert {
   id: string;
-  type: "price" | "calendar" | "signal" | "setup";
+  type: "price" | "calendar" | "signal" | "setup" | "study";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;

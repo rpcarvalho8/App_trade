@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import StudyCard from "./StudyCard";
 
 export default function MorningBriefPage() {
   const [html, setHtml] = useState<string>("");
@@ -60,6 +61,9 @@ export default function MorningBriefPage() {
           </button>
         </div>
       </div>
+
+      {/* Plano de estudo (guia Wyckoff/Elliott/SMC): expandido ao fim de semana. */}
+      <StudyCard />
 
       {loading && !html && (
         <div style={{ color: "#64748b", fontSize: 13, padding: "40px 0", textAlign: "center" }}>
@@ -129,7 +133,8 @@ export default function MorningBriefPage() {
           background: #0d1929;
           border-radius: 0 6px 6px 0;
         }
-        .brief-md ul { padding-left: 20px; margin: 8px 0; }
+        .brief-md ul { padding-left: 20px; margin: 8px 0; list-style: disc; }
+        .brief-md ol { padding-left: 22px; margin: 8px 0; list-style: decimal; }
         .brief-md li { margin: 6px 0; }
         .brief-md strong { color: #e2e8f0; }
         .brief-md hr { border: none; border-top: 1px solid #1e2d45; margin: 24px 0; }

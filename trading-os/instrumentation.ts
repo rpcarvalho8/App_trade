@@ -4,6 +4,7 @@
  * Unifica no processo único do `npm run dev`:
  *   1. AI Coach: relatório semanal (cron domingo 09:00 + catch-up).
  *   2. Morning Brief: brief macro diário (cron 06:00 + catch-up no arranque).
+ *      + lembrete de estudo ao sábado e domingo às 08:30 (plano em lib/study-plan.ts).
  *   3. Motor de Alertas em tempo real + servidor WebSocket (porta 3001).
  *
  * Tudo só no runtime Node.js. A Gemini requer GEMINI_API_KEY em .env.local.
@@ -65,7 +66,16 @@ export async function register() {
     cron.schedule("0 6 * * *", () => {
       if (process.env.GEMINI_API_KEY) runBrief("cron 06:00");
     });
-    console.log("[TradingOS] crons ativos: AI Coach (dom 09:00) · Morning Brief (diário 06:00)");
+    // Sessões de estudo do fim de semana (não precisa de Gemini).
+    cron.schedule("30 8 * * 0,6", async () => {
+      try {
+        const { sendWeekendStudyReminder } = await import("@/lib/study");
+        await sendWeekendStudyReminder();
+      } catch (e: any) {
+        console.warn("[Estudo] lembrete falhou:", e?.message || e);
+      }
+    });
+    console.log("[TradingOS] crons ativos: AI Coach (dom 09:00) · Morning Brief (diário 06:00) · Estudo (sáb/dom 08:30)");
   } catch (e: any) {
     console.error("[TradingOS] não foi possível iniciar os crons:", e?.message || e);
   }
