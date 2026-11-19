@@ -25,10 +25,12 @@ import {
   startXtbClient,
   isXauReady,
   getXauMarketStatus,
+  getXauFreshness,
 } from "@/lib/marketdata/xtb-client";
 import { getSolBuffers, getSolSpread, onSolTick, startKrakenClient } from "@/lib/marketdata/kraken-client";
 import { aggregateCandles } from "@/lib/marketdata/ohlc-utils";
 import { emitSignalAlert, emitSetupAlert, checkActiveSignals } from "@/lib/signals";
+import { broadcastAlert } from "@/lib/alert-ws";
 import { fetchCalendar } from "@/lib/morning-brief";
 
 type Asset = "XAUUSD" | "SOLUSD";
@@ -65,6 +67,8 @@ interface RunnerState {
   newsBlackout: boolean;
   newsCheckedAt: number;
   solReady: boolean;
+  /** Já avisámos que o feed do ouro parou (um aviso por episódio). */
+  xauStaleAlerted: boolean;
   timer: NodeJS.Timeout | null;
 }
 
@@ -103,6 +107,7 @@ function state(): RunnerState {
       newsBlackout: false,
       newsCheckedAt: 0,
       solReady: false,
+      xauStaleAlerted: false,
       timer: null,
     } as RunnerState;
   }
@@ -255,6 +260,30 @@ async function evalXau(price: number): Promise<void> {
   if (!isXauReady()) {
     setIdle("XAUUSD", "à espera do histórico de velas (Twelve Data)");
     return;
+  }
+
+  // Gráfico congelado não é mercado: não avalia e avisa uma vez (Mesa + Telegram).
+  const fresh = getXauFreshness(now);
+  if (fresh.stale) {
+    setIdle("XAUUSD", fresh.reason!);
+    if (!s.xauStaleAlerted) {
+      s.xauStaleAlerted = true;
+      console.warn(`[signal-runner] ${fresh.reason}`);
+      broadcastAlert({
+        id: `xau-feed-stale-${now}`,
+        ts: now,
+        type: "setup",
+        level: "warning",
+        asset: "XAUUSD",
+        title: "XAUUSD · feed parado, sem sinais",
+        message: `${fresh.reason}. O motor do ouro está em pausa até chegarem velas novas.`,
+      });
+    }
+    return;
+  }
+  if (s.xauStaleAlerted) {
+    s.xauStaleAlerted = false;
+    console.log("[signal-runner] feed do ouro voltou — motor XAU retomado");
   }
 
   const newsBlocked = await refreshNewsBlackout();
