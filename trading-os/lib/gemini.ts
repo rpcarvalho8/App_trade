@@ -32,6 +32,8 @@ export type GeminiGenerationConfig = {
   maxOutputTokens?: number;
   responseMimeType?: string;
   thinkingConfig?: { thinkingBudget: number };
+  /** Resolução com que o modelo lê as imagens (ex.: "MEDIA_RESOLUTION_HIGH" para gráficos). */
+  mediaResolution?: string;
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -102,7 +104,8 @@ async function postGenerate(
   key: string,
   parts: GeminiPart[],
   generationConfig: GeminiGenerationConfig,
-  timeoutMs: number
+  timeoutMs: number,
+  systemInstruction?: string
 ): Promise<{ ok: true; json: any } | { ok: false; status: number; body: string }> {
   const res = await fetch(`${API_BASE}/${model}:generateContent?key=${key}`, {
     method: "POST",
@@ -110,6 +113,7 @@ async function postGenerate(
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
       generationConfig,
+      ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
     }),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -137,6 +141,8 @@ export async function generateContent(opts: {
   generationConfig: GeminiGenerationConfig;
   timeoutMs?: number;
   logLabel?: string;
+  /** Prompt de sistema (vai em systemInstruction, separado do conteúdo do utilizador). */
+  systemInstruction?: string;
 }): Promise<any> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -158,7 +164,7 @@ export async function generateContent(opts: {
     if (m > 0 || !config.thinkingConfig) delete config.thinkingConfig;
 
     for (let attempt = 1; attempt <= ATTEMPTS_PER_MODEL; attempt++) {
-      const result = await postGenerate(model, key, opts.parts, config, timeoutMs);
+      const result = await postGenerate(model, key, opts.parts, config, timeoutMs, opts.systemInstruction);
       if (result.ok) {
         if (m > 0) console.log(`[${label}] OK com ${model}`);
         return result.json;

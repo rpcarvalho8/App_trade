@@ -9,10 +9,6 @@
     "entry": "M5"
   },
   "session": {
-    "allowed": [
-      "london",
-      "london_ny_overlap"
-    ],
     "newsBlackoutMinutes": 30,
     "newsImpact": [
       "NFP",
@@ -20,11 +16,7 @@
       "FOMC",
       "Powell"
     ],
-    "maxCandlesAfterSweep": 48,
-    "utcHours": [
-      7,
-      20
-    ]
+    "maxCandlesAfterSweep": 48
   },
   "sequence": [
     {
