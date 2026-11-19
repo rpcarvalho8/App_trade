@@ -97,6 +97,8 @@ interface XauState {
   status: XauWarmUpStatus;
   source: XauSource;
   lastPrice: number | null;
+  /** Fecho provisório da vela M5 em formação no último pedido. */
+  livePrice?: number;
   lastError?: string;
   timers: NodeJS.Timeout[];
   /** Última barra (epoch floor) para a qual já pedimos dados, por TF. */
@@ -135,7 +137,7 @@ function seedBuffer(tf: string, candles: Candle[]): void {
 function emitFromLast(source: XauSource): void {
   const s = state();
   const m5 = s.buffers.get("M5")?.last();
-  const price = m5?.close ?? s.lastPrice;
+  const price = s.livePrice ?? m5?.close ?? s.lastPrice;
   if (price == null) return;
   s.lastPrice = price;
   const tick: XtbTick = {
@@ -224,7 +226,23 @@ function shouldFetchForNewCandle(tf: string, now = Date.now()): boolean {
     s.skippedPolls++;
     return false;
   }
+  // Dá tempo ao agregador para fechar a vela anterior antes de a pedir.
+  if (last != null && now - currentBar < SETTLE_MS) return false;
   return true;
+}
+
+/** Espera depois do fecho de uma vela antes de a pedir (o Twelve Data fecha a barra com uns segundos de atraso). */
+const SETTLE_MS = 20_000;
+
+/**
+ * Só velas FECHADAS entram no buffer. Antes entrava também a vela em formação, com os
+ * poucos segundos que tinha à hora do pedido; depois do fecho (até ao pedido seguinte)
+ * o motor lia-a como fechada, com OHLC falso, e um sweep ou MSS podia ser visto ou
+ * perdido por isso — o replay sobre a cache (velas finais) não reproduzia o que o live viu.
+ */
+export function onlyClosed(candles: Candle[], tf: string, fetchedAt: number): Candle[] {
+  const period = CANDLE_MS[tf] || tfToMs(tf);
+  return candles.filter((c) => c.time + period <= fetchedAt);
 }
 
 /** Tamanho do pedido quando o TF ainda não tem barras suficientes (arranque ou recuperação). */
@@ -249,7 +267,11 @@ async function refreshTf(tf: string, now = Date.now()): Promise<boolean> {
   if (!needsBackfill && !shouldFetchForNewCandle(tf, now)) return false;
   const period = CANDLE_MS[tf] || tfToMs(tf);
   const size = needsBackfill ? BACKFILL_SIZE[tf] : incrementalSize(tf, buf.last()?.time, now);
-  const candles = await fetchTwelveDataOhlc(tf, size);
+  const raw = await fetchTwelveDataOhlc(tf, size);
+  if (!raw.length) return false;
+  // Preço actual = fecho provisório da vela M5 em formação (só para o preço, não para a estrutura).
+  if (tf === "M5") s.livePrice = raw[raw.length - 1].close;
+  const candles = onlyClosed(raw, tf, Date.now());
   if (!candles.length) return false;
   const merged = new Map<number, Candle>();
   for (const e of buf.candles) merged.set(e.time, e);

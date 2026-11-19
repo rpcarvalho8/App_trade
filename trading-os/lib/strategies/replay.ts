@@ -65,7 +65,7 @@ export function replayStrategies(
   data: ReplayInput,
   from: number,
   to: number,
-  opts: { cooldownMs?: number } = {}
+  opts: { cooldownMs?: number; utcHours?: [number, number] } = {}
 ): ReplayStrategyReport[] {
   const cooldown = opts.cooldownMs ?? 15 * 60_000;
   const reports = strategies.map<ReplayStrategyReport>((s) => ({
@@ -101,6 +101,11 @@ export function replayStrategies(
       const last = states[k].lastSignalAt;
       if (last && now - last < cooldown) return;
 
+      // Janela horária (como o live fazia até 19/11): fora dela a sequência fica congelada.
+      if (opts.utcHours) {
+        const h = new Date(now).getUTCHours();
+        if (h < opts.utcHours[0] || h >= opts.utcHours[1]) return;
+      }
       rep.cycles++;
       const steps = [...strategy.sequence].sort((a, b) => a.step - b.step);
       const prevStep = states[k].currentStepIndex;

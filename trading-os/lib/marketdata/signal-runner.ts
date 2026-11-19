@@ -32,6 +32,7 @@ import { aggregateCandles } from "@/lib/marketdata/ohlc-utils";
 import { emitSignalAlert, emitSetupAlert, checkActiveSignals } from "@/lib/signals";
 import { broadcastAlert } from "@/lib/alert-ws";
 import { sendAlertEmail } from "@/lib/alert-email";
+import { logEngine } from "@/lib/engine-log";
 import { fetchCalendar } from "@/lib/morning-brief";
 
 type Asset = "XAUUSD" | "SOLUSD";
@@ -128,7 +129,29 @@ function sessionOk(strategy: StrategyDefinition, now: number): boolean {
   return h >= hours[0] && h < hours[1];
 }
 
-function recordEvals(strategy: StrategyDefinition, evals: EngineEvaluation[], finalState: EngineState, now: number): void {
+/** Último estado registado no engine_log por estratégia (só se grava quando muda). */
+const logged: Record<string, { idle: string | null; wait: string | null }> = {};
+
+/** Grava no SQLite as mudanças de estado (pausa, à espera de…) desde o último ciclo. */
+function logTransitions(asset: Asset, now: number): void {
+  const s = state();
+  for (const st of STRATEGIES_BY_SYMBOL[asset]) {
+    const d = s.diag[st.id];
+    const prev = (logged[st.id] ||= { idle: null, wait: null });
+    const price = s.lastPrice[asset] ?? null;
+    if (d.idleReason !== prev.idle) {
+      prev.idle = d.idleReason;
+      if (d.idleReason) void logEngine({ strategyId: st.id, symbol: st.symbol, kind: "idle", reason: d.idleReason, price }, now);
+    }
+    const wait = d.idleReason ? null : d.waitingReason ? `${d.step + 1}:${d.nextStepType}:${d.waitingReason}` : null;
+    if (wait !== prev.wait) {
+      prev.wait = wait;
+      if (wait) void logEngine({ strategyId: st.id, symbol: st.symbol, kind: "wait", step: d.step + 1, type: d.nextStepType, reason: d.waitingReason, price }, now);
+    }
+  }
+}
+
+function recordEvals(strategy: StrategyDefinition, evals: EngineEvaluation[], finalState: EngineState, now: number, price?: number): void {
   const d = state().diag[strategy.id];
   d.lastEvalAt = now;
   d.idleReason = null;
@@ -138,7 +161,12 @@ function recordEvals(strategy: StrategyDefinition, evals: EngineEvaluation[], fi
   const last = evals[evals.length - 1];
   d.waitingReason = last && !last.progressed && !last.invalidated ? last.reason ?? null : null;
   for (const r of evals) {
+    if (r.progressed && !r.invalidated) {
+      const cs = r.state.confirmed[r.state.confirmed.length - 1];
+      if (cs) void logEngine({ strategyId: strategy.id, symbol: strategy.symbol, kind: "step", step: cs.step, type: String(cs.type), reason: (cs.details?.reason as string) ?? null, price }, now);
+    }
     if (r.invalidated && r.reason) {
+      void logEngine({ strategyId: strategy.id, symbol: strategy.symbol, kind: "invalidated", reason: r.reason, price }, now);
       const day = utcDay(now);
       if (d.rejects.day !== day) d.rejects = { day, counts: {} };
       d.rejects.counts[r.reason] = (d.rejects.counts[r.reason] || 0) + 1;
@@ -222,7 +250,7 @@ async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): P
     const prevStep = s.states[strategy.id].currentStepIndex;
     const cycle = runStrategyCycle(strategy, s.states[strategy.id], ctx);
     s.states[strategy.id] = cycle.state;
-    recordEvals(strategy, cycle.evaluations, cycle.state, now);
+    recordEvals(strategy, cycle.evaluations, cycle.state, now, ctx.price);
 
     // "Armado": o passo configurado confirmou neste ciclo (e a sequência continua em curso).
     const armType = strategy.alerts?.armOnStep;
@@ -242,6 +270,7 @@ async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): P
     }
 
     if (cycle.signal) {
+      void logEngine({ strategyId: strategy.id, symbol: strategy.symbol, kind: "signal", reason: `${cycle.signal.direction} rr=${cycle.signal.rr.toFixed(2)}`, price: cycle.signal.entry }, now);
       await emitSignalAlert(cycle.signal);
       s.states[strategy.id].lastSignalAt = now;
       s.signalsDay[strategy.id] = { day, count: today + 1 };
@@ -252,6 +281,14 @@ async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): P
 }
 
 async function evalXau(price: number): Promise<void> {
+  try {
+    await evalXauInner(price);
+  } finally {
+    logTransitions("XAUUSD", Date.now());
+  }
+}
+
+async function evalXauInner(price: number): Promise<void> {
   const s = state();
   const now = Date.now();
   if (now - s.lastEval.XAUUSD < 5_000) return;
@@ -301,6 +338,14 @@ async function evalXau(price: number): Promise<void> {
 }
 
 async function evalSol(price: number, spread?: number): Promise<void> {
+  try {
+    await evalSolInner(price, spread);
+  } finally {
+    logTransitions("SOLUSD", Date.now());
+  }
+}
+
+async function evalSolInner(price: number, spread?: number): Promise<void> {
   const s = state();
   const now = Date.now();
   if (now - s.lastEval.SOLUSD < 3_000) return;
