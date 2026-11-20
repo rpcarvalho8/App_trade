@@ -128,9 +128,6 @@ export function fvgGoldenRatio(
       const mid = (fvgLow + fvgHigh) / 2;
       const fvgPct = ((fvgHigh - fvgLow) / mid) * 100;
       if (fvgPct < minPct) continue;
-      const fibLevel = range < 0
-        ? (mid - extreme) / Math.abs(range)
-        : (mid - extreme) / Math.abs(range);
       // For bearish impulse (start high, extreme low): retrace up from extreme
       const impulseDown = extreme < start;
       const level = impulseDown
