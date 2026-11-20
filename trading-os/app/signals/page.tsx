@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { validateLevels } from "@/lib/risk";
 import { PLAYBOOKS } from "@/lib/playbooks";
@@ -126,7 +126,13 @@ export default function SignalsPage() {
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
 
+  const busy = useRef(false);
+  const fails = useRef(0);
+
   const load = () => {
+    // Um pedido de cada vez: se o servidor está lento, não se empilham pedidos a cada 8 s.
+    if (busy.current) return;
+    busy.current = true;
     fetch("/api/signals", { cache: "no-store" })
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
@@ -135,14 +141,39 @@ export default function SignalsPage() {
       .then((d) => {
         setData(d);
         setErr("");
+        fails.current = 0;
       })
-      .catch((e) => setErr(String(e?.message || e)));
+      .catch((e) => {
+        // Uma falha isolada (servidor a recompilar) não merece banner: mantém os últimos dados.
+        fails.current += 1;
+        if (fails.current >= 2) {
+          const msg = String(e?.message || e);
+          setErr(
+            msg === "Failed to fetch"
+              ? "sem ligação ao servidor local (a recompilar ou parado). A tentar de novo…"
+              : msg
+          );
+        }
+      })
+      .finally(() => {
+        busy.current = false;
+      });
   };
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 8000);
-    return () => clearInterval(t);
+    // Separador escondido = não pede nada; ao voltar, actualiza logo.
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 8000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   const status = data?.status || "—";
