@@ -12,6 +12,17 @@ npm run dev
 
 Abre http://localhost:3000 e começa em **/sessao**.
 
+## Uso diário: `npm run app` (leve)
+
+`npm run dev` é para mexer no código: compila cada página e vigia os ficheiros, e chega a 1–3 GB de RAM.
+Para operar no dia-a-dia usa:
+
+```bash
+npm run app   # compila uma vez (~1 min) e arranca em modo produção (~200 MB de RAM)
+```
+
+O motor de sinais, os alertas e os crons correm igual. Depois de um `git pull`, volta a correr `npm run app`.
+
 ## Gemini (AI Coach / Morning Brief)
 
 HTTP **503/429** = saturação temporária da Google (**não** é a chave). Journal, Mesa e alertas continuam.

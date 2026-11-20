@@ -4,6 +4,14 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.1.72"],
   // Mantém módulos nativos do Node fora do bundle (evita "Can't resolve" em runtimes não-Node)
   serverExternalPackages: ["node-cron", "ws"],
+  // Em `npm run app` (next start) a public/ é lida no arranque: capturas novas vêm da rota da API.
+  async rewrites() {
+    return {
+      beforeFiles: [],
+      afterFiles: [{ source: "/screenshots/:file", destination: "/api/screenshots/:file" }],
+      fallback: [],
+    };
+  },
 };
 
 export default nextConfig;
