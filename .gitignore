@@ -21,3 +21,10 @@ backups/
 # Morning Brief generated reports (dados locais)
 trading-os/reports/morning-brief/
 trading-os/task.md
+
+# Capturas geradas, instaladores e notas locais
+trading-os/public/screenshots/
+*.exe
+wget-log
+mt5linux.sh
+Next_App_steps.odt
