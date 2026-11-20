@@ -33,6 +33,7 @@ import { emitSignalAlert, emitSetupAlert, checkActiveSignals } from "@/lib/signa
 import { broadcastAlert } from "@/lib/alert-ws";
 import { sendAlertEmail } from "@/lib/alert-email";
 import { logEngine } from "@/lib/engine-log";
+import { buildShadowVariants, createShadowStore, runShadowVariant, type ShadowStore, type ShadowVariant } from "@/lib/strategies/shadow";
 import { fetchCalendar } from "@/lib/morning-brief";
 
 type Asset = "XAUUSD" | "SOLUSD";
@@ -72,6 +73,8 @@ interface RunnerState {
   /** Já avisámos que o feed do ouro parou (um aviso por episódio). */
   xauStaleAlerted: boolean;
   timer: NodeJS.Timeout | null;
+  /** Variantes sombra (só engine_log, sem alertas). Criado de forma lazy. */
+  shadow?: { variants: ShadowVariant[]; store: ShadowStore };
 }
 
 const ALL: StrategyDefinition[] = [...STRATEGIES_BY_SYMBOL.XAUUSD, ...STRATEGIES_BY_SYMBOL.SOLUSD];
@@ -277,6 +280,27 @@ async function runAsset(asset: Asset, base: Omit<EngineContext, "sessionOk">): P
       d.signalsToday = today + 1;
       d.lastSignalAt = now;
     }
+  }
+  runShadow(asset, { ...base, sessionOk: true }, now);
+}
+
+/**
+ * Variantes sombra do activo: mesmas velas e mesmo contexto, estado próprio, resultado só no engine_log.
+ * Nunca pode afectar o motor real: qualquer erro é engolido. Desliga com SHADOW_VARIANTS=off.
+ */
+function runShadow(asset: Asset, ctx: EngineContext, now: number): void {
+  if (process.env.SHADOW_VARIANTS === "off") return;
+  try {
+    const s = state();
+    if (!s.shadow) {
+      const variants = buildShadowVariants();
+      s.shadow = { variants, store: createShadowStore(variants) };
+    }
+    for (const v of s.shadow.variants) {
+      if (v.symbol === asset) runShadowVariant(v, s.shadow.store, ctx, now, s.cooldownMs, (row, at) => void logEngine(row, at));
+    }
+  } catch (e) {
+    console.warn("[signal-runner] variantes sombra:", e instanceof Error ? e.message : e);
   }
 }
 
