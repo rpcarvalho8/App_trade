@@ -2,6 +2,9 @@ trading-os.zip
 
 # Bases de dados locais (dados reais / sensíveis)
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Arquivos pesados
 *.tar.gz

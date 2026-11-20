@@ -15,6 +15,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const { createClient } = require("@libsql/client");
 
 const ROOT = process.cwd();
 const DB_PATH = path.join(ROOT, "trading.db");
@@ -46,7 +47,28 @@ function listBackups() {
     .sort((a, b) => b.name.localeCompare(a.name)); // mais recente primeiro (nome ordenável)
 }
 
-function backup() {
+/**
+ * A app usa SQLite em modo WAL: as escritas recentes vivem em trading.db-wal até ao checkpoint.
+ * Copiar só o trading.db perdia-as; VACUUM INTO tira uma cópia consistente mesmo com a app a correr.
+ */
+async function snapshot(dest) {
+  const db = createClient({ url: `file:${DB_PATH}` });
+  try {
+    await db.execute({ sql: "VACUUM INTO ?", args: [dest] });
+  } finally {
+    db.close();
+  }
+}
+
+/** Ficheiros WAL antigos aplicados sobre uma DB restaurada corrompem-na: apagam-se. */
+function removeWalFiles() {
+  for (const ext of ["-wal", "-shm"]) {
+    const f = DB_PATH + ext;
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  }
+}
+
+async function backup() {
   if (!fs.existsSync(DB_PATH)) {
     console.error(
       `[db:backup] ERRO: 'trading.db' não encontrado em ${DB_PATH}.\n` +
@@ -64,15 +86,15 @@ function backup() {
   }
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const dest = path.join(BACKUP_DIR, `${PREFIX}${timestamp()}${EXT}`);
-  fs.copyFileSync(DB_PATH, dest);
+  await snapshot(dest);
   console.log(
-    `[db:backup] OK: cópia criada -> ${path.relative(ROOT, dest)} (${humanSize(size)})`
+    `[db:backup] OK: cópia criada -> ${path.relative(ROOT, dest)} (${humanSize(fs.statSync(dest).size)})`
   );
   const all = listBackups();
   console.log(`[db:backup] Total de backups guardados: ${all.length}`);
 }
 
-function restore() {
+async function restore() {
   const backups = listBackups();
   if (backups.length === 0) {
     console.error(
@@ -88,12 +110,14 @@ function restore() {
   if (fs.existsSync(DB_PATH) && fs.statSync(DB_PATH).size > 0) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     const safety = path.join(BACKUP_DIR, `${PREFIX}pre-restore_${timestamp()}${EXT}`);
-    fs.copyFileSync(DB_PATH, safety);
+    await snapshot(safety);
     console.log(
       `[db:restore] DB atual salvaguardada em -> ${path.relative(ROOT, safety)}`
     );
   }
 
+  console.log("[db:restore] Pára a app (npm run dev) antes de restaurar.");
+  removeWalFiles();
   fs.copyFileSync(latest.full, DB_PATH);
   console.log(
     `[db:restore] OK: restaurado ${latest.name} (${humanSize(size)}) -> trading.db`
@@ -105,8 +129,12 @@ function restore() {
 
 function main() {
   const args = process.argv.slice(2);
-  if (args.includes("--backup")) return backup();
-  if (args.includes("--restore")) return restore();
+  const fail = (e) => {
+    console.error("[db-utils] ERRO:", e?.message || e);
+    process.exit(1);
+  };
+  if (args.includes("--backup")) return backup().catch(fail);
+  if (args.includes("--restore")) return restore().catch(fail);
   console.log(
     `Uso:\n` +
       `  node scripts/db-utils.js --backup    Criar cópia de segurança do trading.db\n` +
