@@ -61,21 +61,22 @@ export async function saveCandlesToCache(
 ): Promise<void> {
   if (!candles.length) return;
   await ensureCandleCacheTable();
-  // Batch em chunks para não saturar o driver
-  const chunk = 80;
-  for (let i = 0; i < candles.length; i += chunk) {
-    const slice = candles.slice(i, i + chunk);
-    for (const c of slice) {
-      await db.execute({
-        sql: `INSERT INTO candle_cache (symbol, timeframe, time, open, high, low, close, volume, source, updated_at)
+  // Uma transacção por lote: antes era um commit (fsync) por vela e o servidor bloqueava ao gravar 500 velas.
+  const sql = `INSERT INTO candle_cache (symbol, timeframe, time, open, high, low, close, volume, source, updated_at)
               VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
               ON CONFLICT(symbol, timeframe, time) DO UPDATE SET
                 open=excluded.open, high=excluded.high, low=excluded.low,
                 close=excluded.close, volume=excluded.volume, source=excluded.source,
-                updated_at=datetime('now')`,
+                updated_at=datetime('now')`;
+  const chunk = 250;
+  for (let i = 0; i < candles.length; i += chunk) {
+    await db.batch(
+      candles.slice(i, i + chunk).map((c) => ({
+        sql,
         args: [symbol, timeframe, c.time, c.open, c.high, c.low, c.close, c.volume, source],
-      });
-    }
+      })),
+      "write"
+    );
   }
 }
 

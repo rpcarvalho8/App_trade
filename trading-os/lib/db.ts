@@ -27,7 +27,40 @@ try {
 
 export const db = createClient({ url: `file:${DB_PATH}` });
 
-export async function initDB() {
+/**
+ * O driver SQLite local é síncrono: cada comando bloqueia o servidor enquanto corre.
+ * WAL + synchronous=NORMAL: escritas sem fsync a cada linha e leituras que não esperam pelas escritas.
+ */
+let pragmas: Promise<void> | null = null;
+function ensurePragmas(): Promise<void> {
+  if (!pragmas) {
+    pragmas = db
+      .executeMultiple(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;`)
+      .catch((e: unknown) => {
+        console.warn("[DB] pragmas:", e instanceof Error ? e.message : e);
+      });
+  }
+  return pragmas;
+}
+
+/**
+ * Cria tabelas e migra uma vez por processo. Antes corria ~40 comandos (com escritas) em cada
+ * pedido: a página de Sinais chamava-o a cada 8 s e o servidor ficava lento.
+ */
+export function initDB(): Promise<void> {
+  const g = globalThis as { __tosInitDB?: Promise<void> | null };
+  if (!g.__tosInitDB) {
+    g.__tosInitDB = ensurePragmas()
+      .then(runInitDB)
+      .catch((e: unknown) => {
+        g.__tosInitDB = null; // tenta de novo no próximo pedido
+        throw e;
+      });
+  }
+  return g.__tosInitDB;
+}
+
+async function runInitDB() {
   await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS trades (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

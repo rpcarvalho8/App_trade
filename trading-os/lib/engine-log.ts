@@ -34,6 +34,9 @@ function ensure(): Promise<void> {
         );
         CREATE INDEX IF NOT EXISTS idx_engine_log_at ON engine_log (symbol, at);
       `)
+      // O registo não cresce para sempre: guarda os últimos 60 dias (limpo a cada arranque).
+      .then(() => db.execute({ sql: `DELETE FROM engine_log WHERE at < ?`, args: [Date.now() - 60 * 86_400_000] }))
+      .then(() => undefined)
       .catch((e) => {
         ready = null;
         throw e;
