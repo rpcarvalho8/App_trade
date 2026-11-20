@@ -35,6 +35,9 @@ export function mssCisd(
   const window = candles.slice(-lookback - 1, -1);
   const last = candles[candles.length - 1];
 
+  // Pivots de 1 vela (>= nos vizinhos) mantidos de propósito. Testado com swingPivots(side=2) num replay de
+  // 45 dias do XAUUSD (Nov 2026): menos sinais (−11% London, −17% rotação) e sem melhoria de resultado que
+  // se distinga do ruído (n≈30–60, R médio dentro de ±0,3). Reabrir só com mais dados.
   // Swing pivots (high/low locais) — se não houver pivots, usa max/min da janela
   const highs: { i: number; v: number }[] = [];
   const lows: { i: number; v: number }[] = [];
