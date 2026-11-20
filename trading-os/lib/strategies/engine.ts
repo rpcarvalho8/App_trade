@@ -146,7 +146,7 @@ export function calcRR(entry: number, sl: number, tp: number): number {
   return Math.abs(tp - entry) / risk;
 }
 
-function confluenceKeysForStep(step: SequenceStep, strategy: StrategyDefinition): string[] {
+export function confluenceKeysForStep(step: SequenceStep, strategy: StrategyDefinition): string[] {
   const type = step.type;
   const keys = strategy.confluences;
   const mapping: Record<string, string[]> = {
@@ -499,7 +499,7 @@ function gateLost(strategy: StrategyDefinition, state: EngineState, ctx: EngineC
 
 /** Estado limpo que guarda os gatilhos já usados (para o mesmo sweep/zona não disparar duas vezes). */
 /** Motivos que não "gastam" o gatilho: o mesmo sweep/zona pode voltar a ser avaliado. */
-const KEEP_ANCHOR_REASONS = new Set(["outside_session", "news_blackout"]);
+const KEEP_ANCHOR_REASONS = new Set(["outside_session", "news_blackout", "spread_unknown"]);
 
 function resetState(strategy: StrategyDefinition, prev: EngineState, reason?: string): EngineState {
   const keep = reason != null && KEEP_ANCHOR_REASONS.has(reason);
@@ -571,21 +571,14 @@ function buildSignal(
     return reject("rr_below_min");
   }
 
-  // Spread gate (SOL)
-  if (strategy.confluences.includes("spread_below_50pct_fvg") && ctx.spread != null) {
-    const fvgPct = typeof lastDetails.fvgPct === "number" ? lastDetails.fvgPct : null;
-    if (fvgPct != null && fvgPct > 0) {
-      const spreadPctOfFvg = (ctx.spread / (entry! * (fvgPct / 100))) * 100;
-      // spread as absolute price distance vs fvg size
-      const fvgSize =
-        typeof lastDetails.fvgHigh === "number" && typeof lastDetails.fvgLow === "number"
-          ? Math.abs(lastDetails.fvgHigh - lastDetails.fvgLow)
-          : 0;
-      if (fvgSize > 0 && ctx.spread > fvgSize * 0.5) {
-        return reject("spread_too_wide");
-      }
-      void spreadPctOfFvg;
-    }
+  // Spread gate (SOL): sem spread conhecido não há como validar a confluência — não emite.
+  if (strategy.confluences.includes("spread_below_50pct_fvg")) {
+    if (ctx.spread == null) return reject("spread_unknown");
+    const fvgSize =
+      typeof lastDetails.fvgHigh === "number" && typeof lastDetails.fvgLow === "number"
+        ? Math.abs(lastDetails.fvgHigh - lastDetails.fvgLow)
+        : 0;
+    if (fvgSize > 0 && ctx.spread > fvgSize * 0.5) return reject("spread_too_wide");
   }
 
   // Session confluence for XAU
