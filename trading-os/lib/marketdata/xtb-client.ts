@@ -457,6 +457,23 @@ export function onXauTick(handler: XtbTickHandler): () => void {
   return () => s.handlers.delete(handler);
 }
 
+/**
+ * Preço do ouro para o motor: o do feed (vela M5 em formação) e, se não houver, o do tick.
+ * Se se afastar mais de 1 % do último fecho M5, está desactualizado: usa o fecho.
+ */
+export function resolveXauPrice(tickPrice: number | null, feedPrice: number | null, lastClose: number | null): number {
+  const p = feedPrice ?? tickPrice ?? lastClose;
+  if (p == null) return NaN;
+  if (lastClose != null && Math.abs(p - lastClose) / lastClose > 0.01) return lastClose;
+  return p;
+}
+
+/** Preço actual do ouro segundo o feed (vela M5 em formação no último pedido, senão o último fecho). */
+export function getXauPrice(): number | null {
+  const s = state();
+  return s.livePrice ?? s.buffers.get("M5")?.last()?.close ?? s.lastPrice ?? null;
+}
+
 export function isXauReady(): boolean {
   return state().status === "ready" && warmUpComplete();
 }

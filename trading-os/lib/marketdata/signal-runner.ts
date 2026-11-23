@@ -26,6 +26,8 @@ import {
   isXauReady,
   getXauMarketStatus,
   getXauFreshness,
+  getXauPrice,
+  resolveXauPrice,
 } from "@/lib/marketdata/xtb-client";
 import { getSolBuffers, getSolSpread, onSolTick, startKrakenClient } from "@/lib/marketdata/kraken-client";
 import { aggregateCandles } from "@/lib/marketdata/ohlc-utils";
@@ -120,6 +122,11 @@ function state(): RunnerState {
 }
 
 const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+
+/** Fecho da última vela M5 fechada do ouro. */
+function lastXauClose(): number | null {
+  return getXauBuffers().get("M5")?.last()?.close ?? null;
+}
 
 function setIdle(asset: Asset, reason: string): void {
   for (const st of STRATEGIES_BY_SYMBOL[asset]) state().diag[st.id].idleReason = reason;
@@ -312,12 +319,18 @@ async function evalXau(price: number): Promise<void> {
   }
 }
 
-async function evalXauInner(price: number): Promise<void> {
+async function evalXauInner(tickPrice: number): Promise<void> {
   const s = state();
   const now = Date.now();
+  // O preço é actualizado SEMPRE, antes do travão de 5 s. Antes ficava depois: o polling (60 s) e o
+  // relógio (30 s) arrancam juntos e o tick de vela nova caía quase sempre 1–2 s depois do relógio,
+  // era descartado, e o motor ficou dias com o preço do arranque (3537 com o ouro a 3620) —
+  // os longs de 23/11 às 11:00 e 13:30 morreram em "levels_wrong_side".
+  const price = resolveXauPrice(tickPrice, getXauPrice(), lastXauClose());
+  if (!Number.isFinite(price)) return;
+  s.lastPrice.XAUUSD = price;
   if (now - s.lastEval.XAUUSD < 5_000) return;
   s.lastEval.XAUUSD = now;
-  s.lastPrice.XAUUSD = price;
 
   if (!isXauReady()) {
     setIdle("XAUUSD", "à espera do histórico de velas (Twelve Data)");
@@ -372,9 +385,9 @@ async function evalSol(price: number, spread?: number): Promise<void> {
 async function evalSolInner(price: number, spread?: number): Promise<void> {
   const s = state();
   const now = Date.now();
+  s.lastPrice.SOLUSD = price;
   if (now - s.lastEval.SOLUSD < 3_000) return;
   s.lastEval.SOLUSD = now;
-  s.lastPrice.SOLUSD = price;
 
   const candlesByTf = mapBuffers(getSolBuffers().snapshot());
   const m15 = candlesByTf.M15 || [];
@@ -424,7 +437,8 @@ export function startSignalRunner(): void {
   // Relógio: avalia mesmo sem tick novo (o XAU só tem tick quando chega vela M5).
   s.timer = setInterval(() => {
     const p = state().lastPrice;
-    if (p.XAUUSD != null) evalXau(p.XAUUSD).catch(() => {});
+    const xau = getXauPrice() ?? p.XAUUSD;
+    if (xau != null) evalXau(xau).catch(() => {});
     if (p.SOLUSD != null) evalSol(p.SOLUSD).catch(() => {});
   }, 30_000);
 
