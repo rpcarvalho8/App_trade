@@ -83,6 +83,7 @@
     "slLogic": "beyond_sweep_extreme_m15",
     "tpLogic": "next_opposing_high_low_m15_h1",
     "rrMin": 2.0,
+    "minStopPct": 0.1,
     "partialAt1R": {
       "closePct": 50,
       "moveSlToBE": true

@@ -84,11 +84,14 @@ export function replayStrategies(
   // Avalia logo a seguir ao fecho de cada vela M5 que existe (mercado aberto).
   const times = data.M5.map((c) => c.time + M5_MS + 1_000).filter((t) => t >= from && t <= to);
   for (const now of times) {
-    const m15 = upTo(data.M15, now);
+    // Só velas que já existiam: a vela que abre exactamente no fecho (time = now - 1 s) ainda não tem dados
+    // (antes entrava com o OHLC final e o preço de entrada vinha 5 min do futuro).
+    const seen = now - 1_000;
+    const m15 = upTo(data.M15, seen);
     const candlesByTf: Record<string, Candle[]> = {
-      M5: upTo(data.M5, now),
+      M5: upTo(data.M5, seen),
       M15: m15,
-      H4: upTo(data.H4, now),
+      H4: upTo(data.H4, seen),
       H1: aggregateCandles(m15, "H1"),
     };
     const price = candlesByTf.M5[candlesByTf.M5.length - 1]?.close;

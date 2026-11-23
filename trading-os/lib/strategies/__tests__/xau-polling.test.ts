@@ -98,3 +98,14 @@ describe("polling XAU (Twelve Data)", () => {
     expect(getXauFreshness(Date.UTC(2026, 10, 21, 12)).stale).toBe(false);
   });
 });
+
+describe("preço do ouro para o motor", () => {
+  it("usa o preço do feed e ignora um preço preso longe do último fecho", async () => {
+    const { resolveXauPrice } = await import("@/lib/marketdata/xtb-client");
+    // 23/11: motor preso no preço do arranque (3537) com o ouro a 3620
+    expect(resolveXauPrice(3537.28, null, 3620.7)).toBe(3620.7);
+    expect(resolveXauPrice(3537.28, 3622.1, 3620.7)).toBe(3622.1);
+    expect(resolveXauPrice(3621, null, 3620.7)).toBe(3621);
+    expect(Number.isNaN(resolveXauPrice(null, null, null))).toBe(true);
+  });
+});
