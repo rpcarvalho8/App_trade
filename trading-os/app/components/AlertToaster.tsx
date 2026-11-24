@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 interface MarketAlert {
   id: string;
-  type: "price" | "calendar" | "signal" | "setup";
+  type: "price" | "calendar" | "signal" | "setup" | "news";
   level: "info" | "warning" | "critical";
   asset?: string;
   title: string;
@@ -41,7 +41,11 @@ function saveSeen(seen: Set<string>) {
 /** Aviso do próprio motor (ex.: feed do ouro parado): fica no ecrã até o fechares. */
 const isFeedAlert = (a: MarketAlert) => a.meta?.kind === "feed_stale";
 
-const important = (a: MarketAlert) => a.type === "signal" || a.type === "setup" || a.level === "critical";
+const important = (a: MarketAlert) => a.type === "signal" || a.type === "setup" || a.type === "news" || a.level === "critical";
+
+/** Link da notícia original (só http/https). */
+const newsUrl = (a: MarketAlert): string | null =>
+  typeof a.meta?.url === "string" && /^https?:\/\//.test(a.meta.url) ? (a.meta.url as string) : null;
 
 /** Notificação do sistema operativo: aparece mesmo com o separador em segundo plano. */
 function systemNotify(a: MarketAlert) {
@@ -50,7 +54,9 @@ function systemNotify(a: MarketAlert) {
     const n = new Notification(a.title, { body: a.message, tag: a.id, requireInteraction: a.type === "signal" || isFeedAlert(a) });
     n.onclick = () => {
       window.focus();
-      if (a.type === "signal" || a.type === "setup") window.location.href = "/signals";
+      const url = newsUrl(a);
+      if (url) window.open(url, "_blank", "noopener");
+      else if (a.type === "signal" || a.type === "setup") window.location.href = "/signals";
     };
   } catch {}
 }
@@ -69,6 +75,8 @@ function playAlertSound(kind: MarketAlert["type"]) {
           ? [660, 880]
         : kind === "calendar"
           ? [660, 520]
+        : kind === "news"
+          ? [988, 784, 988]
           : [740];
     tones.forEach((freq, i) => {
       const osc = ctx.createOscillator();
@@ -116,12 +124,12 @@ export default function AlertToaster() {
     setToasts((prev) => [a, ...prev].slice(0, 5));
     if (important(a)) {
       playAlertSound(a.type);
-      if (document.visibilityState !== "visible" || a.type === "signal" || isFeedAlert(a)) systemNotify(a);
+      if (document.visibilityState !== "visible" || a.type === "signal" || isFeedAlert(a) || (a.type === "news" && a.level === "critical")) systemNotify(a);
     }
     if (isFeedAlert(a)) return;
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== a.id));
-    }, a.type === "signal" ? 60000 : a.type === "setup" ? 30000 : AUTO_DISMISS_MS);
+    }, a.type === "signal" ? 60000 : a.type === "setup" || a.type === "news" ? 30000 : AUTO_DISMISS_MS);
   }, []);
 
   const dismiss = useCallback((id: string) => {
@@ -163,7 +171,7 @@ export default function AlertToaster() {
             // Antes marcava tudo como visto: um sinal emitido com a página fechada nunca aparecia.
             const now = Date.now();
             for (const a of data.recent as MarketAlert[]) {
-              if ((a.type === "signal" || a.type === "setup") && now - a.ts < REPLAY_WINDOW_MS) pushToast(a);
+              if ((a.type === "signal" || a.type === "setup" || (a.type === "news" && a.level === "critical")) && now - a.ts < REPLAY_WINDOW_MS) pushToast(a);
               else seen.current.add(a.id);
             }
           }
@@ -229,7 +237,7 @@ export default function AlertToaster() {
       {toasts.map((t) => {
         const st = LEVEL_STYLE[t.level] || LEVEL_STYLE.info;
         const typeLabel =
-          isFeedAlert(t) ? "FEED" : t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
+          isFeedAlert(t) ? "FEED" : t.type === "news" ? "NOTÍCIA" : t.type === "calendar" ? "CALENDÁRIO" : t.type === "signal" ? "SINAL" : t.type === "setup" ? "ARMADO" : "PREÇO";
         return (
           <div
             key={t.id}
@@ -254,6 +262,16 @@ export default function AlertToaster() {
               </button>
             </div>
             <div style={{ color: "#cbd5e1", fontSize: 11.5, marginTop: 5, lineHeight: 1.45 }}>{t.message}</div>
+            {newsUrl(t) && (
+              <a
+                href={newsUrl(t)!}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: "inline-block", marginTop: 6, fontSize: 10.5, color: st.accent, textDecoration: "underline" }}
+              >
+                Abrir notícia ↗
+              </a>
+            )}
             <div style={{ color: "#475569", fontSize: 9, marginTop: 6, display: "flex", justifyContent: "space-between" }}>
               <span>{typeLabel}{t.asset ? ` · ${t.asset}` : ""}</span>
               <span>{new Date(t.ts).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}</span>

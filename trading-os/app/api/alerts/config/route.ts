@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { WS_PORT, recentAlerts, connectedClients } from "@/lib/alert-ws";
 import { getThresholds } from "@/lib/alert-engine";
 import { telegramConfigured } from "@/lib/alert-telegram";
+import { getNewsStatus } from "@/lib/news-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ export async function GET() {
     wsPort: WS_PORT,
     thresholds: getThresholds(),
     recent: recentAlerts(),
+    news: getNewsStatus(),
     channels: {
       telegram: telegramConfigured(),
       email: !!(process.env.ALERT_EMAIL_TO && (process.env.RESEND_API_KEY || process.env.ALERT_EMAIL_WEBHOOK)),

@@ -6,7 +6,9 @@
  *   1. Desvios abruptos de preço — sonda os ativos a cada N segundos e compara
  *      com a leitura anterior; se a variação exceder o limiar do ativo, emite alerta.
  *   2. Proximidade de eventos de ALTO IMPACTO — verifica o calendário económico
- *      e emite alerta ~5 min antes de cada evento de alto impacto do dia.
+ *      e emite alerta ~5 min antes de cada evento de alto impacto do dia, e outro
+ *      ~3 min depois com a reação de XAUUSD/SOLUSD (o feed não traz o valor real).
+ *   3. Notícias de última hora — ver lib/news-engine.ts (arrancado em conjunto).
  *
  * Fontes (gratuitas, sem chave):
  *   - Ouro: gold-api.com          (intraday)
@@ -26,6 +28,11 @@ const UA = "Mozilla/5.0 (compatible; TradingOS-AlertEngine/1.0)";
 const PRICE_INTERVAL = Number(process.env.ALERTS_PRICE_INTERVAL || 45);
 const CAL_INTERVAL = Number(process.env.ALERTS_CAL_INTERVAL || 60);
 const CAL_LEAD_MIN = Number(process.env.ALERTS_CAL_LEAD_MIN || 5); // minutos antes do evento
+// Minutos DEPOIS da divulgação para medir a reação do preço (o calendário gratuito não traz o valor real).
+const CAL_POST_MIN = Number(process.env.ALERTS_CAL_POST_MIN || 3);
+// Ativos operados: a reação pós-evento é medida nestes.
+const TRADED = ["XAUUSD", "SOLUSD"] as const;
+const HISTORY_MS = 90 * 60_000;
 
 // Limiar de variação (%) por leitura (~45s) para considerar "desvio abrupto".
 // Valores base calibrados pela volatilidade intrínseca de cada ativo, lidos do
@@ -110,6 +117,9 @@ interface EngineState {
   started: boolean;
   lastPrices: Record<string, number | null>;
   firedCalendar: Set<string>;
+  firedPost: Set<string>;
+  /** Leituras recentes por ativo (90 min) para medir reações a notícias/eventos. */
+  history: Record<string, { t: number; p: number }[]>;
   events: CalEvent[];
   eventsDay: string;
   priceTimer: NodeJS.Timeout | null;
@@ -123,13 +133,45 @@ function state(): EngineState {
       started: false,
       lastPrices: {},
       firedCalendar: new Set<string>(),
+      firedPost: new Set<string>(),
+      history: {},
       events: [],
       eventsDay: "",
       priceTimer: null,
       calTimer: null,
     } as EngineState;
   }
-  return g.__tosAlertEngine as EngineState;
+  const st = g.__tosAlertEngine as EngineState;
+  // Estado criado por uma versão anterior (hot reload) não tem estes campos.
+  st.firedPost ??= new Set<string>();
+  st.history ??= {};
+  return st;
+}
+
+function recordPrice(asset: string, p: number, t = Date.now()): void {
+  const h = (state().history[asset] ??= []);
+  h.push({ t, p });
+  while (h.length && t - h[0].t > HISTORY_MS) h.shift();
+}
+
+/** Último preço lido em ou antes de `t`. */
+export function priceAt(asset: string, t: number): number | null {
+  const h = state().history[asset] || [];
+  let out: number | null = null;
+  for (const x of h) {
+    if (x.t <= t) out = x.p;
+    else break;
+  }
+  return out;
+}
+
+/** Preço atual e variação % face a `windowMs` atrás (null se não houver histórico suficiente). */
+export function priceReaction(asset: string, windowMs: number, now = Date.now()): { price: number; changePct: number | null } | null {
+  const h = state().history[asset] || [];
+  if (!h.length) return null;
+  const price = h[h.length - 1].p;
+  const ref = priceAt(asset, now - windowMs);
+  return { price, changePct: ref ? ((price - ref) / ref) * 100 : null };
 }
 
 function mkAlert(a: Omit<MarketAlert, "id" | "ts">): MarketAlert {
@@ -153,6 +195,7 @@ async function priceTick(): Promise<void> {
   const thresholds = getThresholds();
   for (const [asset, price] of Object.entries(prices)) {
     if (price == null) continue;
+    recordPrice(asset, price);
     const prev = s.lastPrices[asset];
     if (prev != null && prev > 0) {
       // Variação absoluta percentual entre leitura atual e anterior.
@@ -229,6 +272,46 @@ async function calendarTick(): Promise<void> {
   }
 }
 
+/**
+ * Depois da divulgação: o feed gratuito não traz o valor real, por isso medimos o que interessa
+ * ao trader — a reação do preço de XAUUSD e SOLUSD desde a hora do evento.
+ */
+function postReleaseTick(): void {
+  const s = state();
+  const now = Date.now();
+  const th = getThresholds();
+  for (const ev of s.events) {
+    const t = new Date(ev.date).getTime();
+    if (Number.isNaN(t)) continue;
+    const minsAfter = (now - t) / 60000;
+    const key = ev.date + ev.title;
+    if (minsAfter < CAL_POST_MIN || minsAfter > CAL_POST_MIN + 10 || s.firedPost.has(key)) continue;
+    s.firedPost.add(key);
+
+    const moves: { asset: string; pct: number; price: number }[] = [];
+    for (const a of TRADED) {
+      const ref = priceAt(a, t);
+      const cur = s.lastPrices[a];
+      if (ref && cur) moves.push({ asset: a, pct: ((cur - ref) / ref) * 100, price: cur });
+    }
+    // Reação "forte" = acima do limiar de desvio abrupto do ativo.
+    const strong = moves.some((m) => Math.abs(m.pct) >= (th[m.asset] ?? 1));
+    const reaction = moves.length
+      ? moves.map((m) => `${m.asset} ${m.pct >= 0 ? "+" : ""}${m.pct.toFixed(2)}% (${fmtPrice(m.price)})`).join(" · ")
+      : "sem preço suficiente para medir a reação";
+    broadcastAlert(
+      mkAlert({
+        type: "calendar",
+        level: strong ? "critical" : "warning",
+        asset: ev.country,
+        title: `${strong ? "🚨" : "📊"} Saiu: ${ev.country} ${ev.title}`,
+        message: `Reação em ${Math.round(minsAfter)} min: ${reaction}.${ev.forecast ? ` Previsão ${ev.forecast} vs anterior ${ev.previous}.` : ""}${strong ? " Movimento forte: não persigas o preço, espera a estrutura." : ""}`,
+        meta: { kind: "post_release", moves },
+      })
+    );
+  }
+}
+
 /** Arranca o motor de alertas (idempotente). */
 export function startAlertEngine(): void {
   const s = state();
@@ -239,6 +322,7 @@ export function startAlertEngine(): void {
   fetchPrices()
     .then((p) => {
       s.lastPrices = p;
+      for (const [a, v] of Object.entries(p)) if (v != null) recordPrice(a, v);
       console.log("[Alerts] baseline de preços registada.");
     })
     .catch(() => {});
@@ -250,7 +334,9 @@ export function startAlertEngine(): void {
   }, PRICE_INTERVAL * 1000);
 
   s.calTimer = setInterval(() => {
-    calendarTick().catch((e) => console.warn("[Alerts] calendarTick:", e?.message || e));
+    calendarTick()
+      .then(() => postReleaseTick())
+      .catch((e) => console.warn("[Alerts] calendarTick:", e?.message || e));
   }, CAL_INTERVAL * 1000);
 
   console.log(
