@@ -70,8 +70,23 @@ export interface CalEvent {
   day: string;
 }
 
+// O ForexFactory corta pedidos repetidos (429): o motor de sinais, os alertas e o brief
+// partilham esta cópia em memória durante 10 min.
+let calCache: { at: number; data: any } | null = null;
+const CAL_TTL_MS = 10 * 60_000;
+
 export async function fetchCalendar(today: string) {
-  const data = await getJSON("https://nfs.faireconomy.media/ff_calendar_thisweek.json");
+  let data: any;
+  if (calCache && Date.now() - calCache.at < CAL_TTL_MS) data = calCache.data;
+  else {
+    try {
+      data = await getJSON("https://nfs.faireconomy.media/ff_calendar_thisweek.json");
+      calCache = { at: Date.now(), data };
+    } catch (e) {
+      if (!calCache) throw e;
+      data = calCache.data; // fonte em baixo: usa a última cópia boa
+    }
+  }
   const events: CalEvent[] = (Array.isArray(data) ? data : []).map((e: any) => ({
     title: e.title,
     country: e.country,

@@ -4,7 +4,8 @@
  * Unifica no processo único do `npm run dev`:
  *   1. AI Coach: relatório semanal (cron domingo 09:00 + catch-up).
  *   2. Morning Brief: brief macro diário (cron 06:00 + catch-up no arranque).
- *   3. Motor de Alertas em tempo real + servidor WebSocket (porta 3001).
+ *   3. Motor de Alertas em tempo real + servidor WebSocket (porta 3001)
+ *      + motor de notícias de última hora (lib/news-engine.ts).
  *
  * Tudo só no runtime Node.js. A Gemini requer GEMINI_API_KEY em .env.local.
  * Catch-up NÃO bloqueia o boot: corre em setTimeout + try/catch; falhas 503 ficam deferred.
@@ -76,6 +77,8 @@ export async function register() {
     const { startAlertEngine } = await import("@/lib/alert-engine");
     await startAlertWs();
     startAlertEngine();
+    const { startNewsEngine } = await import("@/lib/news-engine");
+    startNewsEngine();
   } catch (e: any) {
     console.error("[Alerts] não foi possível arrancar o motor de alertas:", e?.message || e);
   }

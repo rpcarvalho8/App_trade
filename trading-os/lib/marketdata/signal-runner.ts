@@ -12,6 +12,7 @@
  *   - sinal completo com PE / SL / TP validados.
  * Protecções: cooldown por estratégia, máximo de sinais por dia (kill.maxTradesPerDay), janela horária.
  */
+import { newsShockActive } from "@/lib/news-engine";
 import {
   STRATEGIES_BY_SYMBOL,
   runStrategyCycle,
@@ -371,7 +372,8 @@ async function evalXauInner(tickPrice: number): Promise<void> {
   // H1 agregado do M15 real: zonas H1 sem gastar créditos Twelve Data.
   if (candlesByTf.M15?.length) candlesByTf.H1 = aggregateCandles(candlesByTf.M15, "H1");
 
-  await runAsset("XAUUSD", { now, calendarClean: !newsBlocked, price, candlesByTf });
+  // Notícia crítica de última hora no ouro = mercado sujo, como um evento de calendário.
+  await runAsset("XAUUSD", { now, calendarClean: !newsBlocked && !newsShockActive("XAUUSD", now), price, candlesByTf });
 }
 
 async function evalSol(price: number, spread?: number): Promise<void> {
@@ -411,7 +413,7 @@ async function evalSolInner(price: number, spread?: number): Promise<void> {
 
   await runAsset("SOLUSD", {
     now,
-    calendarClean: !newsBlocked,
+    calendarClean: !newsBlocked && !newsShockActive("SOLUSD", now),
     price,
     spread: spread ?? getSolSpread() ?? undefined,
     takeProfitLevels,
